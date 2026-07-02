@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>👨‍✈️ 근무표 ver4.7</title>
+  <title>👨‍✈️ 근무표 ver4.8</title>
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -47,7 +47,7 @@
   </script>
   <script type="text/babel">
     const { useState, useEffect, useRef, useCallback } = React;
-const APP_VERSION = "4.7";
+const APP_VERSION = "4.8";
 
 
 // ── 발전별 포지션 정의 ────────────────────────────────────
@@ -1138,7 +1138,7 @@ function App() {
           })}
         </div>
 
-        <div style={{ marginTop:12, fontSize:11, color:"#475569", textAlign:"center", paddingBottom:8 }}>
+        <div style={{ marginTop:12, fontSize:12, color:"#94a3b8", textAlign:"center", paddingBottom:10, fontWeight:700, lineHeight:1.7 }}>
           🚔 순찰자 &nbsp;·&nbsp; ★ 공휴일 &nbsp;·&nbsp; 🔴 주말/공휴일 빨간 표시 &nbsp;·&nbsp; 오늘 = 주황 하이라이트
         </div>
         </div>{/* captureRef 끝 */}
@@ -1160,6 +1160,35 @@ function App() {
           }} style={{ background:"#7f1d1d", border:"none", borderRadius:5, color:"#fca5a5", fontSize:10, fontWeight:700, padding:"3px 8px", cursor:"pointer", whiteSpace:"nowrap", flexShrink:0 }}>
             🔄 순서 초기화
           </button>
+        </div>
+
+        {/* 제작자 푸터 */}
+        <div style={{
+          marginTop:24,
+          paddingTop:20,
+          paddingBottom:28,
+          borderTop:"1px solid #334155",
+          textAlign:"center",
+        }}>
+          <div style={{
+            fontSize:15,
+            fontWeight:700,
+            color:"#94a3b8",
+            letterSpacing:"0.3px",
+            marginBottom:10,
+          }}>
+            Made by Hyungdai
+          </div>
+          <div style={{
+            fontSize:28,
+            fontWeight:900,
+            color:"#f8fafc",
+            letterSpacing:"1.5px",
+            lineHeight:1.15,
+            textShadow:"0 0 14px rgba(255,255,255,0.10)",
+          }}>
+            SEUL-POLICE 👨‍✈️
+          </div>
         </div>
 
         {/* 저장 토스트 */}
