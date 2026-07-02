@@ -1,5 +1,5 @@
 const { useState, useEffect, useRef, useCallback } = React;
-const APP_VERSION = "5.0";
+const APP_VERSION = "5.0.1";
 // ver5.0: 파일 분리(index.html / app.js / firebase.js / styles.css), ver4.9 기능 포함
 
 
@@ -309,12 +309,24 @@ function isValidSetting(data) {
   return true;
 }
 
+function getMonthKey(year, month) {
+  return `${year}-${String(month).padStart(2,"0")}`;
+}
+
+function getMonthlySchedulePath(year, month, band, division) {
+  return `monthlySchedules/${getMonthKey(year, month)}/${band}/${division}`;
+}
+
+function getLegacySchedulePath(band, division) {
+  return `schedules/${band}/${division}`;
+}
+
 function saveSetting(data) {
   const core = makeSavableCore(data);
   const payload = { ...core, updatedAt: new Date().toISOString() };
   try {
     if (window.firebaseDB) {
-      return window.firebaseDB.save(`schedules/${data.band}/${data.division}`, payload);
+      return window.firebaseDB.save(getMonthlySchedulePath(data.year, data.month, data.band, data.division), payload);
     }
   } catch (err) {
     console.warn("Firebase 저장 실패:", err);
@@ -375,12 +387,24 @@ function App() {
         return;
       }
 
-      setSyncStatus("실시간 연결됨");
-      unsubscribe = window.firebaseDB.listen(`schedules/${band}/${division}`, (data) => {
+      setSyncStatus(`${getMonthKey(selectedYear, selectedMonth)} 실시간 연결됨`);
+      unsubscribe = window.firebaseDB.listen(getMonthlySchedulePath(selectedYear, selectedMonth, band, division), async (data) => {
         if (cancelled) return;
 
-        const normalized = data
-          ? normalizeRemoteData(data, band, division)
+        // 월별 데이터가 아직 없으면 기존 ver4.x 데이터(schedules/반/발전)를 1회 초기값으로 사용합니다.
+        // 이후 저장은 반드시 monthlySchedules/YYYY-MM/반/발전에만 저장되어 월별로 완전히 독립됩니다.
+        let sourceData = data;
+        if (!sourceData && window.firebaseDB?.read) {
+          try {
+            sourceData = await window.firebaseDB.read(getLegacySchedulePath(band, division));
+          } catch (err) {
+            console.warn("기존 설정 불러오기 실패:", err);
+          }
+        }
+        if (cancelled) return;
+
+        const normalized = sourceData
+          ? normalizeRemoteData(sourceData, band, division)
           : {
               band,
               division,
@@ -391,7 +415,7 @@ function App() {
             };
 
         const core = makeSavableCore(normalized);
-        lastRemoteCoreRef.current = JSON.stringify(core);
+        lastRemoteCoreRef.current = data ? JSON.stringify(core) : "";
 
         applyingRemoteRef.current = true;
         setWorkerCount(normalized.workerCount);
@@ -412,7 +436,7 @@ function App() {
       setIsLoaded(false);
       if (typeof unsubscribe === "function") unsubscribe();
     };
-  }, [band, division]);
+  }, [band, division, selectedYear, selectedMonth]);
 
   // 입력/근무자수/순서가 바뀌면 Firebase에 자동 저장
   useEffect(() => {
@@ -425,7 +449,7 @@ function App() {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
       setSyncStatus("저장중...");
-      saveSetting(core)
+      saveSetting({ ...core, year: selectedYear, month: selectedMonth })
         ?.then(() => {
           lastRemoteCoreRef.current = coreJson;
           setSyncStatus("저장 완료 · 실시간 연결됨");
@@ -477,7 +501,7 @@ function App() {
     setError("");
     setNames(trimmed);
     setSchedule(generateSchedule(trimmed, selectedYear, selectedMonth, division, workerCount, shiftOrders, band));
-    saveSetting({ band, division, workerCount, names: trimmed, shiftOrders, positionLabels });
+    saveSetting({ band, division, year: selectedYear, month: selectedMonth, workerCount, names: trimmed, shiftOrders, positionLabels });
     setSavedToast(true);
     setTimeout(() => setSavedToast(false), 2200);
   };
@@ -550,7 +574,7 @@ function App() {
 
   // 순찰자 표시 로직
   // - A근무: 기존 규칙 유지
-  // - C반 N근무: 기록 🚔(1), 소내 🚔(2)
+  // - C반 N근무: 기록 🚔1, 소내 🚔2
   const cleanPosLabel = (value) => String(value || "").replace(/\(.*\)/, "").trim();
 
   const getPatrolInfo = useCallback((day, posIdx) => {
@@ -561,8 +585,8 @@ function App() {
 
     // C반 1·2발전 N근무: 기록=1순찰, 소내=2순찰
     if (band === "C반" && day.shift === "N") {
-      if (label === "기록") return { label, mark: "🚔(1)" };
-      if (label === "소내") return { label, mark: "🚔(2)" };
+      if (label === "기록") return { label, mark: "🚔1" };
+      if (label === "소내") return { label, mark: "🚔2" };
       return null;
     }
 
@@ -1106,7 +1130,7 @@ function App() {
             setInputNames(defNames);
             setNames(defNames);
             setSchedule(generateSchedule(defNames, selectedYear, selectedMonth, division, workerCount, defOrders, band));
-            saveSetting({ band, division, workerCount, names: defNames, shiftOrders: defOrders, positionLabels: defaultLabels });
+            saveSetting({ band, division, year: selectedYear, month: selectedMonth, workerCount, names: defNames, shiftOrders: defOrders, positionLabels: defaultLabels });
             alert(`${band} ${division} 설정이 초기화됐어요!`);
           }} style={{ background:"#7f1d1d", border:"none", borderRadius:5, color:"#fca5a5", fontSize:10, fontWeight:700, padding:"3px 8px", cursor:"pointer", whiteSpace:"nowrap", flexShrink:0 }}>
             🔄 순서 초기화

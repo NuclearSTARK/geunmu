@@ -1,5 +1,5 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js";
-    import { getDatabase, ref, set, onValue } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-database.js";
+    import { getDatabase, ref, set, onValue, get } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-database.js";
 
     const firebaseConfig = {
       apiKey: "AIzaSyBIXM13hlgSr8uBA1FWMbRe0biUoYCFVIY",
@@ -17,6 +17,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/12.15.0/fireba
 
     window.firebaseDB = {
       save: (path, data) => set(ref(db, path), data),
+      read: (path) => get(ref(db, path)).then(snap => snap.val()),
       listen: (path, callback) => onValue(ref(db, path), snap => callback(snap.val()))
     };
 
