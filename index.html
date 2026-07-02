@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>근무표 ver4.5</title>
+  <title>👨‍✈️ 근무표 ver4.7</title>
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -47,6 +47,7 @@
   </script>
   <script type="text/babel">
     const { useState, useEffect, useRef, useCallback } = React;
+const APP_VERSION = "4.7";
 
 
 // ── 발전별 포지션 정의 ────────────────────────────────────
@@ -638,13 +639,13 @@ function App() {
       } else {
         const names = positions.map((p, posIdx) => {
           const patrol = getPatrolInfo(d, posIdx);
-          return `${patrol ? "★" : ""}${d.assignment[p] || ""}`.padEnd(5);
+          return `${d.assignment[p] || ""}${patrol ? "🚔" : ""}`.padEnd(5);
         }).join(" ");
         lines.push(`${holiday}${dateStr}[${d.shift}] ${names}`);
       }
     });
     lines.push(`${"─".repeat(36)}`);
-    lines.push(`★=공휴일 · ★=순찰자`);
+    lines.push(`★=공휴일 · 🚔=순찰자`);
     const text = lines.join("\n");
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(() => {
@@ -762,7 +763,7 @@ function App() {
               </div>
             </div>
 
-            <div style={{ fontSize:26, fontWeight:900, letterSpacing:"-1px" }}>근무표 ver4.5</div>
+            <div style={{ fontSize:26, fontWeight:900, letterSpacing:"-1px" }}>👨‍✈️ 근무표 ver{APP_VERSION}</div>
           </div>
 
           <div style={{ fontSize:12, color:"#475569", marginTop:4 }}>
@@ -901,7 +902,7 @@ function App() {
                             textAlign:"center", display:"flex", alignItems:"center", justifyContent:"center", overflow:"hidden",
                             background: patrol ? "rgba(250,204,21,0.18)" : "transparent", borderRadius:3
                           }}>
-                            {day.assignment ? (<>{patrol && <span style={{ color:"#facc15", marginRight:2, fontWeight:900 }}>★</span>}{day.assignment[pos]}</>) : ""}
+                            {day.assignment ? (<>{day.assignment[pos]}{patrol && <span style={{ marginLeft:2 }}>🚔</span>}</>) : ""}
                           </div>
                         );
                       })}
@@ -913,7 +914,7 @@ function App() {
 
             {/* 하단 안내 */}
             <div style={{ marginTop:4, fontSize:9, color:"#475569", textAlign:"center", flexShrink:0 }}>
-              📸 지금 스크린샷! &nbsp; <span style={{ color:"#facc15", fontWeight:900 }}>★</span> 순찰자 &nbsp; 🍎 사이드+볼륨↑ &nbsp; 🤖 전원+볼륨↓
+              📸 지금 스크린샷! &nbsp; 🚔 순찰자 &nbsp; 🍎 사이드+볼륨↑ &nbsp; 🤖 전원+볼륨↓
             </div>
           </div>
         )}
@@ -1128,7 +1129,7 @@ function App() {
                       textAlign:"center", background: patrol ? "rgba(250,204,21,0.16)" : "transparent",
                       borderRadius:6, boxShadow: patrol ? "inset 0 0 0 1px rgba(250,204,21,0.45)" : "none"
                     }}>
-                      {day.assignment ? (<>{patrol && <span style={{ color:"#facc15", marginRight:4, fontWeight:900 }}>★</span>}{day.assignment[pos]}</>) : ""}
+                      {day.assignment ? (<>{day.assignment[pos]}{patrol && <span style={{ marginLeft:4 }}>🚔</span>}</>) : ""}
                     </div>
                   );
                 })}
@@ -1138,7 +1139,7 @@ function App() {
         </div>
 
         <div style={{ marginTop:12, fontSize:11, color:"#475569", textAlign:"center", paddingBottom:8 }}>
-          <span style={{ color:"#facc15", fontWeight:900 }}>★</span> 순찰자 &nbsp;·&nbsp; ★ 공휴일 &nbsp;·&nbsp; 🔴 주말/공휴일 빨간 표시 &nbsp;·&nbsp; 오늘 = 주황 하이라이트
+          🚔 순찰자 &nbsp;·&nbsp; ★ 공휴일 &nbsp;·&nbsp; 🔴 주말/공휴일 빨간 표시 &nbsp;·&nbsp; 오늘 = 주황 하이라이트
         </div>
         </div>{/* captureRef 끝 */}
 
