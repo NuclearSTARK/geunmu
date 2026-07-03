@@ -1,6 +1,5 @@
 const { useState, useEffect, useRef, useCallback } = React;
-const APP_VERSION = "5.0.5";
-// ver5.0: 파일 분리(index.html / app.js / firebase.js / styles.css), ver4.9 기능 포함
+// ver5.0.6: 직원DB 일괄저장, 근무지 드래그, PWA 앱 이름/아이콘 적용
 
 
 // ── 발전별 포지션 정의 ────────────────────────────────────
@@ -461,6 +460,58 @@ function App() {
     .map(b => ({ band: b, employees: employeeList.filter(emp => emp.band === b) }))
     .filter(group => group.employees.length > 0);
 
+  const makeEmployeeDraftGroups = useCallback((sourceEmployees) => {
+    const groups = Object.fromEntries(EMPLOYEE_BANDS.map(b => [b, ""]));
+    const list = sortEmployees(Object.entries(sourceEmployees || {}).map(([id, raw]) => normalizeEmployee(raw, id)))
+      .filter(emp => emp.active && emp.name);
+    EMPLOYEE_BANDS.forEach(b => {
+      groups[b] = list.filter(emp => emp.band === b).map(emp => emp.name).join("\n");
+    });
+    return groups;
+  }, []);
+
+  const [employeeDraftGroups, setEmployeeDraftGroups] = useState(() => makeEmployeeDraftGroups({}));
+
+  useEffect(() => {
+    if (!isAdminMode) {
+      setEmployeeDraftGroups(makeEmployeeDraftGroups(employees));
+    }
+  }, [employees, isAdminMode, makeEmployeeDraftGroups]);
+
+  const updateEmployeeDraftGroup = (targetBand, value) => {
+    setEmployeeDraftGroups(prev => ({ ...prev, [targetBand]: value }));
+  };
+
+  const handleEmployeeBulkSave = async () => {
+    if (!window.firebaseDB?.save) { alert("Firebase 연결 후 다시 저장해주세요."); return; }
+
+    const now = new Date().toISOString();
+    const nextEmployees = {};
+    let seq = 1;
+
+    for (const b of EMPLOYEE_BANDS) {
+      const namesInBand = String(employeeDraftGroups[b] || "")
+        .split(/[\n,]/)
+        .map(v => v.trim())
+        .filter(Boolean);
+      const uniqueNames = [...new Set(namesInBand)];
+      for (const name of uniqueNames) {
+        const old = employeeList.find(emp => emp.band === b && emp.name === name);
+        const id = old?.id || `emp${String(seq).padStart(3,"0")}`;
+        while (nextEmployees[id]) seq++;
+        const finalId = nextEmployees[id] ? `emp${String(seq).padStart(3,"0")}` : id;
+        nextEmployees[finalId] = {
+          id: finalId, name, band: b, active: true,
+          createdAt: old?.createdAt || now, updatedAt: now,
+        };
+        seq++;
+      }
+    }
+
+    await window.firebaseDB.save("employees", nextEmployees);
+    alert("A/B/C/D 직원 명단을 전체 저장했어요.");
+  };
+
   const getWorkerOptions = useCallback((slotIdx) => {
     const current = String(inputNames[slotIdx] || "").trim();
     const usedNames = new Set(
@@ -681,6 +732,68 @@ function App() {
   const draggingOrderRef = useRef(null);
   const orderPanelRefs = useRef({});
   const [draggingKey, setDraggingKey] = useState("");
+
+  const draggingPositionRef = useRef(null);
+  const positionPanelRef = useRef(null);
+  const [draggingPositionIdx, setDraggingPositionIdx] = useState(null);
+
+  const movePositionToIndex = useCallback((fromIdx, toIndex) => {
+    const safeTo = Math.max(0, Math.min(workerCount - 1, toIndex));
+    if (fromIdx === safeTo) return;
+
+    const nextLabels = normalizePositionLabels(positionLabels, division, workerCount);
+    const [pickedLabel] = nextLabels.splice(fromIdx, 1);
+    nextLabels.splice(safeTo, 0, pickedLabel);
+
+    const nextInputNames = [...inputNames];
+    const [pickedName] = nextInputNames.splice(fromIdx, 1);
+    nextInputNames.splice(safeTo, 0, pickedName);
+
+    setPositionLabels(nextLabels);
+    setInputNames(nextInputNames);
+    const trimmed = nextInputNames.map(v => String(v || "").trim());
+    if (trimmed.every(v => v !== "") && new Set(trimmed).size === workerCount) {
+      setNames(trimmed);
+      setSchedule(generateSchedule(trimmed, selectedYear, selectedMonth, division, workerCount, shiftOrders, band));
+    }
+    draggingPositionRef.current = safeTo;
+  }, [positionLabels, inputNames, workerCount, division, selectedYear, selectedMonth, shiftOrders, band]);
+
+  const startPositionDrag = useCallback((e, idx) => {
+    e.preventDefault();
+    draggingPositionRef.current = idx;
+    setDraggingPositionIdx(idx);
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    document.body.style.userSelect = "none";
+  }, []);
+
+  const endPositionDrag = useCallback(() => {
+    draggingPositionRef.current = null;
+    setDraggingPositionIdx(null);
+    document.body.style.userSelect = "";
+  }, []);
+
+  const handlePositionPointerMove = useCallback((e) => {
+    const fromIdx = draggingPositionRef.current;
+    if (fromIdx === null || fromIdx === undefined) return;
+    e.preventDefault();
+    const panel = positionPanelRef.current;
+    if (!panel) return;
+    const items = Array.from(panel.querySelectorAll("[data-position-drag-item='true']"));
+    if (!items.length) return;
+
+    let targetIndex = items.length - 1;
+    for (let i = 0; i < items.length; i++) {
+      const rect = items[i].getBoundingClientRect();
+      const midY = rect.top + rect.height / 2;
+      const midX = rect.left + rect.width / 2;
+      if (e.clientY < midY || (Math.abs(e.clientY - midY) < rect.height / 2 && e.clientX < midX)) {
+        targetIndex = i;
+        break;
+      }
+    }
+    movePositionToIndex(fromIdx, targetIndex);
+  }, [movePositionToIndex]);
 
   const moveShiftOrderToIndex = useCallback((shift, draggedNameIdx, toIndex) => {
     setShiftOrders(prev => {
@@ -911,7 +1024,7 @@ function App() {
               </div>
             )}
 
-            <div style={{ fontSize:26, fontWeight:900, letterSpacing:"-1px" }}>👨‍✈️ 근무표 ver{APP_VERSION}</div>
+            <div style={{ fontSize:26, fontWeight:900, letterSpacing:"-1px" }}>👨‍✈️ SEUL POLICE</div>
           </div>
 
           <div style={{ fontSize:12, color:"#475569", marginTop:4 }}>
@@ -957,55 +1070,39 @@ function App() {
 
           {isAdminMode && showEmployeePanel && (
             <div style={{ marginTop:14, borderTop:"1px solid #334155", paddingTop:14 }}>
-              <div style={{ display:"grid", gridTemplateColumns:"1.4fr 0.8fr auto", gap:7, marginBottom:10 }}>
-                <input
-                  value={employeeForm.name}
-                  onChange={e => setEmployeeForm(f => ({ ...f, name:e.target.value }))}
-                  placeholder="직원 이름"
-                  style={{ padding:"8px 9px", background:"#0f172a", border:"1px solid #334155", borderRadius:7, color:"#f1f5f9", fontSize:12, outline:"none" }}
-                />
-                <select value={employeeForm.band} onChange={e => setEmployeeForm(f => ({ ...f, band:e.target.value }))} style={{ ...selectStyle, fontSize:12, padding:"7px 9px" }}>
-                  {EMPLOYEE_BANDS.map(v => <option key={v} value={v}>{v}</option>)}
-                </select>
-                <button onClick={handleEmployeeSave} style={{ background:"linear-gradient(135deg,#10b981,#059669)", border:"none", borderRadius:7, color:"#fff", fontSize:12, fontWeight:900, padding:"8px 10px", cursor:"pointer", whiteSpace:"nowrap" }}>
-                  + 추가
-                </button>
+              <div style={{ fontSize:12, color:"#94a3b8", marginBottom:10, lineHeight:1.6 }}>
+                각 반 명단을 줄바꿈으로 입력하고 <b style={{color:"#f8fafc"}}>전체 저장</b>을 누르면 A/B/C/D가 한 번에 Firebase에 저장됩니다.
               </div>
 
-              <button onClick={applyEmployeesToCurrentSchedule} style={{ width:"100%", marginBottom:10, background:"linear-gradient(135deg,#f59e0b,#f97316)", border:"none", borderRadius:8, color:"#fff", fontSize:12, fontWeight:900, padding:"9px 10px", cursor:"pointer" }}>
-                📌 현재 {getMonthKey(selectedYear, selectedMonth)} {band} 직원 DB 명단을 {division}에 적용
-              </button>
-
-              <div style={{ maxHeight:360, overflowY:"auto", display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:10 }}>
-                {employeeList.length === 0 ? (
-                  <div style={{ color:"#64748b", fontSize:12, textAlign:"center", padding:"12px", gridColumn:"1 / -1" }}>아직 직원 DB가 비어있어요.</div>
-                ) : employeeGroups.map(group => (
-                  <div key={group.band} style={{ background:"#0b1220", border:"1px solid #263449", borderRadius:10, padding:"8px" }}>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:10, marginBottom:10 }}>
+                {EMPLOYEE_BANDS.map(b => (
+                  <div key={b} style={{ background:"#0b1220", border:"1px solid #263449", borderRadius:10, padding:"10px" }}>
                     <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:7 }}>
-                      <div style={{ fontSize:12, fontWeight:900, color:"#f1f5f9" }}>👥 {group.band}</div>
-                      <div style={{ fontSize:10, color:"#64748b", fontWeight:800 }}>{group.employees.length}명</div>
+                      <div style={{ fontSize:13, fontWeight:900, color:"#f1f5f9" }}>👥 {b}</div>
+                      <div style={{ fontSize:10, color:"#64748b", fontWeight:800 }}>줄바꿈 입력</div>
                     </div>
-                    <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
-                      {group.employees.map(emp => (
-                        <div key={emp.id} style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:6, alignItems:"center", background: emp.active ? "#0f172a" : "#1f2937", border:"1px solid #263449", borderRadius:8, padding:"7px" }}>
-                          <div style={{ minWidth:0 }}>
-                            <div style={{ fontSize:9, color:"#64748b", fontWeight:800, marginBottom:3 }}>{emp.id}</div>
-                            <input value={emp.name} onChange={e => updateEmployee(emp.id, { name:e.target.value })} style={{ width:"100%", minWidth:0, padding:"6px 7px", background:"#111827", border:"1px solid #334155", borderRadius:6, color:"#f1f5f9", fontSize:12, fontWeight:800, outline:"none" }} />
-                          </div>
-                          <div style={{ display:"flex", flexDirection:"column", gap:5 }}>
-                            <select value={emp.band} onChange={e => updateEmployee(emp.id, { band:e.target.value })} style={{ ...selectStyle, fontSize:10, padding:"5px 6px" }}>
-                              {EMPLOYEE_BANDS.map(v => <option key={v} value={v}>{v}</option>)}
-                            </select>
-                            <button onClick={() => updateEmployee(emp.id, { active: !emp.active })} style={{ background: emp.active ? "#14532d" : "#374151", border:"none", borderRadius:6, color: emp.active ? "#86efac" : "#cbd5e1", fontSize:10, fontWeight:900, padding:"5px", cursor:"pointer" }}>
-                              {emp.active ? "사용" : "숨김"}
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+                    <textarea
+                      value={employeeDraftGroups[b] || ""}
+                      onChange={e => updateEmployeeDraftGroup(b, e.target.value)}
+                      placeholder={`${b} 직원명\n예: 준우\n준형\n승진\n기훈`}
+                      style={{
+                        width:"100%", minHeight:150, boxSizing:"border-box", resize:"vertical",
+                        padding:"9px 10px", background:"#0f172a", border:"1px solid #334155",
+                        borderRadius:8, color:"#f1f5f9", fontSize:13, fontWeight:800,
+                        lineHeight:1.7, outline:"none", fontFamily:"inherit"
+                      }}
+                    />
                   </div>
                 ))}
               </div>
+
+              <button onClick={handleEmployeeBulkSave} style={{ width:"100%", marginBottom:10, background:"linear-gradient(135deg,#10b981,#059669)", border:"none", borderRadius:8, color:"#fff", fontSize:13, fontWeight:900, padding:"10px 10px", cursor:"pointer" }}>
+                ✅ A/B/C/D 명단 전체 저장
+              </button>
+
+              <button onClick={applyEmployeesToCurrentSchedule} style={{ width:"100%", background:"linear-gradient(135deg,#f59e0b,#f97316)", border:"none", borderRadius:8, color:"#fff", fontSize:12, fontWeight:900, padding:"9px 10px", cursor:"pointer" }}>
+                📌 현재 {getMonthKey(selectedYear, selectedMonth)} {band} 직원 DB 명단을 {division}에 적용
+              </button>
             </div>
           )}
         </div>
@@ -1015,27 +1112,34 @@ function App() {
           <div style={{ fontSize:12, fontWeight:700, color:"#64748b", marginBottom:12, textTransform:"uppercase", letterSpacing:"0.05em" }}>
             근무자 이름 ({workerCount}명)
             <span style={{ marginLeft:8, fontWeight:500, textTransform:"none", fontSize:11, color:"#475569" }}>
-              — 현재 선택한 반의 직원 DB만 표시 · 이름/근무지 중복 선택 방지 · Firebase 자동 저장
+              — 현재 선택한 반의 직원 DB만 표시 · 근무지는 드래그로 순서 변경 · Firebase 자동 저장
             </span>
           </div>
-          <div style={{ display:"grid", gridTemplateColumns:`repeat(${workerCount},1fr)`, gap:8, marginBottom:12 }}>
-            {Array.from({ length: workerCount }, (_, i) => (
-              <div key={i}>
-                <div style={{ fontSize:10, color:"#475569", marginBottom:4, fontWeight:600, display:"flex", alignItems:"center", gap:4 }}>
-                  <span style={{ whiteSpace:"nowrap" }}>{i+1}번째 ·</span>
-                  <select
-                    value={displayPositionLabels[i] || ""}
-                    onChange={e => {
-                      const next = normalizePositionLabels(positionLabels, division, workerCount);
-                      next[i] = e.target.value;
-                      setPositionLabels(next);
-                    }}
-                    style={{ width:"100%", minWidth:0, padding:"3px 5px", background:"#111827", border:"1px solid #334155", borderRadius:5, color:"#94a3b8", fontSize:10, fontWeight:800, outline:"none" }}
-                  >
-                    {getPositionOptions(workerCount, displayPositionLabels, i).map(label => (
-                      <option key={label} value={label}>{label}</option>
-                    ))}
-                  </select>
+          <div
+            ref={positionPanelRef}
+            onPointerMove={handlePositionPointerMove}
+            onPointerUp={endPositionDrag}
+            onPointerCancel={endPositionDrag}
+            style={{ display:"grid", gridTemplateColumns:`repeat(${workerCount},1fr)`, gap:8, marginBottom:12 }}
+          >
+            {Array.from({ length: workerCount }, (_, i) => {
+              const isPosDragging = draggingPositionIdx === i;
+              return (
+              <div key={`${displayPositionLabels[i]}-${i}`} data-position-drag-item="true">
+                <div
+                  onPointerDown={e => startPositionDrag(e, i)}
+                  style={{
+                    fontSize:11, color:"#94a3b8", marginBottom:5, fontWeight:900,
+                    display:"flex", alignItems:"center", justifyContent:"center", gap:5,
+                    background: isPosDragging ? "#334155" : "#111827",
+                    border: isPosDragging ? "1px solid #f59e0b" : "1px solid #334155",
+                    borderRadius:6, padding:"5px 6px", cursor:"grab", touchAction:"none", userSelect:"none",
+                    boxShadow: isPosDragging ? "0 6px 16px rgba(0,0,0,0.35)" : "none"
+                  }}
+                  title="근무지를 잡고 드래그하면 순서가 바뀝니다"
+                >
+                  <span style={{ color:"#64748b" }}>☰</span>
+                  <span>{displayPositionLabels[i] || `근무지${i+1}`}</span>
                 </div>
                 <select
                   value={inputNames[i] || ""}
@@ -1050,7 +1154,8 @@ function App() {
                   ))}
                 </select>
               </div>
-            ))}
+              );
+            })}
           </div>
           {error && (
             <div style={{ color:"#f87171", fontSize:12, marginBottom:10, padding:"7px 11px", background:"#450a0a", borderRadius:6, border:"1px solid #7f1d1d" }}>
@@ -1392,7 +1497,7 @@ function App() {
             saveSetting({ band, division, year: selectedYear, month: selectedMonth, workerCount, names: defNames, shiftOrders: defOrders, positionLabels: defaultLabels });
             alert(`${band} ${division} 설정이 초기화됐어요!`);
           }} style={{ background:"#7f1d1d", border:"none", borderRadius:5, color:"#fca5a5", fontSize:10, fontWeight:700, padding:"3px 8px", cursor:"pointer", whiteSpace:"nowrap", flexShrink:0 }}>
-            🔄 순서 초기화
+            🔄 초기화
           </button>
         </div>
 
