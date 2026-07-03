@@ -1,5 +1,5 @@
 const { useState, useEffect, useRef, useCallback } = React;
-const APP_VERSION = "5.0.3";
+const APP_VERSION = "5.0.4";
 // ver5.0: 파일 분리(index.html / app.js / firebase.js / styles.css), ver4.9 기능 포함
 
 
@@ -338,8 +338,6 @@ function saveSetting(data) {
 // 이후 Firebase Authentication을 붙이면 실제 계정 기반 권한으로 바꿀 예정입니다.
 const ADMIN_EDIT_CODE = "seul2026";
 const EMPLOYEE_BANDS = ["A반","B반","C반","D반"];
-const EMPLOYEE_DIVISIONS = ["1발전","2발전","정문","후문","통제실"];
-
 function makeEmployeeId(employees) {
   const nums = Object.keys(employees || {})
     .map(id => Number(String(id).replace(/[^0-9]/g, "")))
@@ -353,7 +351,6 @@ function normalizeEmployee(raw, id) {
     id,
     name: String(raw?.name || "").trim(),
     band: raw?.band || "A반",
-    division: raw?.division || "1발전",
     active: raw?.active !== false,
     createdAt: raw?.createdAt || null,
     updatedAt: raw?.updatedAt || null,
@@ -364,8 +361,6 @@ function sortEmployees(list) {
   return [...list].sort((a, b) => {
     const byBand = EMPLOYEE_BANDS.indexOf(a.band) - EMPLOYEE_BANDS.indexOf(b.band);
     if (byBand) return byBand;
-    const byDiv = EMPLOYEE_DIVISIONS.indexOf(a.division) - EMPLOYEE_DIVISIONS.indexOf(b.division);
-    if (byDiv) return byDiv;
     return a.name.localeCompare(b.name, "ko");
   });
 }
@@ -415,7 +410,7 @@ function App() {
   const [adminCodeInput, setAdminCodeInput] = useState("");
   const [showEmployeePanel, setShowEmployeePanel] = useState(false);
   const [employees, setEmployees] = useState({});
-  const [employeeForm, setEmployeeForm] = useState({ name:"", band:initBand, division:initDivision });
+  const [employeeForm, setEmployeeForm] = useState({ name:"", band:initBand });
 
   // Firebase에서 직원 DB 실시간 불러오기
   useEffect(() => {
@@ -443,8 +438,8 @@ function App() {
 
   const employeeList = sortEmployees(Object.entries(employees || {}).map(([id, raw]) => normalizeEmployee(raw, id)));
   const activeEmployeeList = employeeList.filter(emp => emp.active && emp.name);
-  const employeeGroups = EMPLOYEE_DIVISIONS
-    .map(div => ({ division: div, employees: employeeList.filter(emp => emp.division === div) }))
+  const employeeGroups = EMPLOYEE_BANDS
+    .map(b => ({ band: b, employees: employeeList.filter(emp => emp.band === b) }))
     .filter(group => group.employees.length > 0);
 
   const getWorkerOptions = useCallback((slotIdx) => {
@@ -454,12 +449,12 @@ function App() {
         .map((name, idx) => idx === slotIdx ? "" : String(name || "").trim())
         .filter(Boolean)
     );
-    const options = activeEmployeeList.filter(emp => emp.name && (!usedNames.has(emp.name) || emp.name === current));
+    const options = activeEmployeeList.filter(emp => emp.band === band && emp.name && (!usedNames.has(emp.name) || emp.name === current));
     if (current && !options.some(emp => emp.name === current)) {
-      options.unshift({ id: `current-${slotIdx}`, name: current, band: "기존", division: "현재값", active: true });
+      options.unshift({ id: `current-${slotIdx}`, name: current, band: "현재값", active: true });
     }
     return options;
-  }, [activeEmployeeList, inputNames]);
+  }, [activeEmployeeList, inputNames, band]);
 
   const setWorkerNameAt = useCallback((slotIdx, value) => {
     const next = [...inputNames];
@@ -490,12 +485,11 @@ function App() {
       id,
       name,
       band: employeeForm.band,
-      division: employeeForm.division,
       active: true,
       createdAt: now,
       updatedAt: now,
     });
-    setEmployeeForm({ name:"", band: employeeForm.band, division: employeeForm.division });
+    setEmployeeForm({ name:"", band: employeeForm.band });
   };
 
   const updateEmployee = (id, patch) => {
@@ -509,9 +503,9 @@ function App() {
   };
 
   const applyEmployeesToCurrentSchedule = () => {
-    const matched = activeEmployeeList.filter(emp => emp.band === band && emp.division === division);
+    const matched = activeEmployeeList.filter(emp => emp.band === band);
     if (matched.length < 4) {
-      alert(`${band} ${division} 직원이 ${matched.length}명입니다. 최소 4명이 필요해요.`);
+      alert(`${band} 직원이 ${matched.length}명입니다. 최소 4명이 필요해요.`);
       return;
     }
     const count = Math.min(6, Math.max(4, matched.length));
@@ -525,7 +519,7 @@ function App() {
     setPositionLabels(nextLabels);
     setSchedule(generateSchedule(nextNames, selectedYear, selectedMonth, division, count, nextOrders, band));
     saveSetting({ band, division, year:selectedYear, month:selectedMonth, workerCount:count, names:nextNames, shiftOrders:nextOrders, positionLabels:nextLabels });
-    alert(`${getMonthKey(selectedYear, selectedMonth)} ${band} ${division}에 직원 DB 명단을 적용했어요.`);
+    alert(`${getMonthKey(selectedYear, selectedMonth)} ${band} 직원 DB 명단을 현재 ${division}에 적용했어요.`);
   };
 
   // Firebase에서 현재 반+발전 설정을 실시간으로 불러오기
@@ -908,7 +902,7 @@ function App() {
             <div>
               <div style={{ fontSize:13, fontWeight:900, color:"#e2e8f0" }}>👥 직원 DB</div>
               <div style={{ fontSize:11, color:"#64748b", marginTop:2 }}>
-                직원은 emp001 방식으로 자동 생성됩니다. 사번은 저장하지 않습니다.
+                직원은 emp001 방식으로 자동 생성됩니다. DB에는 반과 이름만 저장합니다.
               </div>
             </div>
             {isAdminMode ? (
@@ -939,7 +933,7 @@ function App() {
 
           {isAdminMode && showEmployeePanel && (
             <div style={{ marginTop:14, borderTop:"1px solid #334155", paddingTop:14 }}>
-              <div style={{ display:"grid", gridTemplateColumns:"1.2fr 0.8fr 0.8fr auto", gap:7, marginBottom:10 }}>
+              <div style={{ display:"grid", gridTemplateColumns:"1.4fr 0.8fr auto", gap:7, marginBottom:10 }}>
                 <input
                   value={employeeForm.name}
                   onChange={e => setEmployeeForm(f => ({ ...f, name:e.target.value }))}
@@ -949,37 +943,31 @@ function App() {
                 <select value={employeeForm.band} onChange={e => setEmployeeForm(f => ({ ...f, band:e.target.value }))} style={{ ...selectStyle, fontSize:12, padding:"7px 9px" }}>
                   {EMPLOYEE_BANDS.map(v => <option key={v} value={v}>{v}</option>)}
                 </select>
-                <select value={employeeForm.division} onChange={e => setEmployeeForm(f => ({ ...f, division:e.target.value }))} style={{ ...selectStyle, fontSize:12, padding:"7px 9px" }}>
-                  {EMPLOYEE_DIVISIONS.map(v => <option key={v} value={v}>{v}</option>)}
-                </select>
                 <button onClick={handleEmployeeSave} style={{ background:"linear-gradient(135deg,#10b981,#059669)", border:"none", borderRadius:7, color:"#fff", fontSize:12, fontWeight:900, padding:"8px 10px", cursor:"pointer", whiteSpace:"nowrap" }}>
                   + 추가
                 </button>
               </div>
 
               <button onClick={applyEmployeesToCurrentSchedule} style={{ width:"100%", marginBottom:10, background:"linear-gradient(135deg,#f59e0b,#f97316)", border:"none", borderRadius:8, color:"#fff", fontSize:12, fontWeight:900, padding:"9px 10px", cursor:"pointer" }}>
-                📌 현재 {getMonthKey(selectedYear, selectedMonth)} {band} {division} 근무자에 직원 DB 명단 적용
+                📌 현재 {getMonthKey(selectedYear, selectedMonth)} {band} 직원 DB 명단을 {division}에 적용
               </button>
 
               <div style={{ maxHeight:300, overflowY:"auto", display:"flex", flexDirection:"column", gap:10 }}>
                 {employeeList.length === 0 ? (
                   <div style={{ color:"#64748b", fontSize:12, textAlign:"center", padding:"12px" }}>아직 직원 DB가 비어있어요.</div>
                 ) : employeeGroups.map(group => (
-                  <div key={group.division} style={{ background:"#0b1220", border:"1px solid #263449", borderRadius:10, padding:"8px" }}>
+                  <div key={group.band} style={{ background:"#0b1220", border:"1px solid #263449", borderRadius:10, padding:"8px" }}>
                     <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:7 }}>
-                      <div style={{ fontSize:12, fontWeight:900, color:"#f1f5f9" }}>📍 {group.division}</div>
+                      <div style={{ fontSize:12, fontWeight:900, color:"#f1f5f9" }}>👥 {group.band}</div>
                       <div style={{ fontSize:10, color:"#64748b", fontWeight:800 }}>{group.employees.length}명</div>
                     </div>
                     <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
                       {group.employees.map(emp => (
-                        <div key={emp.id} style={{ display:"grid", gridTemplateColumns:"58px 1fr 74px 88px 62px", gap:6, alignItems:"center", background: emp.active ? "#0f172a" : "#1f2937", border:"1px solid #263449", borderRadius:8, padding:"7px" }}>
+                        <div key={emp.id} style={{ display:"grid", gridTemplateColumns:"58px 1fr 74px 62px", gap:6, alignItems:"center", background: emp.active ? "#0f172a" : "#1f2937", border:"1px solid #263449", borderRadius:8, padding:"7px" }}>
                           <div style={{ fontSize:10, color:"#64748b", fontWeight:800 }}>{emp.id}</div>
                           <input value={emp.name} onChange={e => updateEmployee(emp.id, { name:e.target.value })} style={{ minWidth:0, padding:"6px 7px", background:"#111827", border:"1px solid #334155", borderRadius:6, color:"#f1f5f9", fontSize:12, fontWeight:800, outline:"none" }} />
                           <select value={emp.band} onChange={e => updateEmployee(emp.id, { band:e.target.value })} style={{ ...selectStyle, fontSize:11, padding:"6px 7px" }}>
                             {EMPLOYEE_BANDS.map(v => <option key={v} value={v}>{v}</option>)}
-                          </select>
-                          <select value={emp.division} onChange={e => updateEmployee(emp.id, { division:e.target.value })} style={{ ...selectStyle, fontSize:11, padding:"6px 7px" }}>
-                            {EMPLOYEE_DIVISIONS.map(v => <option key={v} value={v}>{v}</option>)}
                           </select>
                           <button onClick={() => updateEmployee(emp.id, { active: !emp.active })} style={{ background: emp.active ? "#14532d" : "#374151", border:"none", borderRadius:6, color: emp.active ? "#86efac" : "#cbd5e1", fontSize:10, fontWeight:900, padding:"6px", cursor:"pointer" }}>
                             {emp.active ? "사용" : "숨김"}
@@ -999,7 +987,7 @@ function App() {
           <div style={{ fontSize:12, fontWeight:700, color:"#64748b", marginBottom:12, textTransform:"uppercase", letterSpacing:"0.05em" }}>
             근무자 이름 ({workerCount}명)
             <span style={{ marginLeft:8, fontWeight:500, textTransform:"none", fontSize:11, color:"#475569" }}>
-              — 이름은 직원 DB에서 선택 · 중복 선택 방지 · Firebase 자동 저장
+              — 현재 선택한 반의 직원 DB만 표시 · 중복 선택 방지 · Firebase 자동 저장
             </span>
           </div>
           <div style={{ display:"grid", gridTemplateColumns:`repeat(${workerCount},1fr)`, gap:8, marginBottom:12 }}>
@@ -1028,7 +1016,7 @@ function App() {
                   <option value="">직원 선택</option>
                   {getWorkerOptions(i).map(emp => (
                     <option key={`${emp.id}-${emp.name}`} value={emp.name}>
-                      {emp.name} · {emp.band} {emp.division}
+                      {emp.name}
                     </option>
                   ))}
                 </select>
