@@ -1,5 +1,5 @@
 const { useState, useEffect, useRef, useCallback } = React;
-const APP_VERSION = "5.0.1";
+const APP_VERSION = "5.0.2";
 // ver5.0: 파일 분리(index.html / app.js / firebase.js / styles.css), ver4.9 기능 포함
 
 
@@ -333,6 +333,43 @@ function saveSetting(data) {
   }
 }
 
+// ── 직원 DB / 관리자모드 ──────────────────────────────────
+// v5.0.2: 우선은 간단한 편집코드 방식입니다.
+// 이후 Firebase Authentication을 붙이면 실제 계정 기반 권한으로 바꿀 예정입니다.
+const ADMIN_EDIT_CODE = "seul2026";
+const EMPLOYEE_BANDS = ["A반","B반","C반","D반"];
+const EMPLOYEE_DIVISIONS = ["1발전","2발전","정문","후문","통제실"];
+
+function makeEmployeeId(employees) {
+  const nums = Object.keys(employees || {})
+    .map(id => Number(String(id).replace(/[^0-9]/g, "")))
+    .filter(n => Number.isFinite(n));
+  const next = (nums.length ? Math.max(...nums) : 0) + 1;
+  return `emp${String(next).padStart(3,"0")}`;
+}
+
+function normalizeEmployee(raw, id) {
+  return {
+    id,
+    name: String(raw?.name || "").trim(),
+    band: raw?.band || "A반",
+    division: raw?.division || "1발전",
+    active: raw?.active !== false,
+    createdAt: raw?.createdAt || null,
+    updatedAt: raw?.updatedAt || null,
+  };
+}
+
+function sortEmployees(list) {
+  return [...list].sort((a, b) => {
+    const byBand = EMPLOYEE_BANDS.indexOf(a.band) - EMPLOYEE_BANDS.indexOf(b.band);
+    if (byBand) return byBand;
+    const byDiv = EMPLOYEE_DIVISIONS.indexOf(a.division) - EMPLOYEE_DIVISIONS.indexOf(b.division);
+    if (byDiv) return byDiv;
+    return a.name.localeCompare(b.name, "ko");
+  });
+}
+
 // ── 컴포넌트 ─────────────────────────────────────────────
 function App() {
   const today = new Date();
@@ -372,6 +409,97 @@ function App() {
   const saveTimerRef = useRef(null);
   const [isLoaded, setIsLoaded] = useState(false);
   const [syncStatus, setSyncStatus] = useState("Firebase 연결 준비중");
+
+  // v5.0.2 직원 DB / 간단 관리자모드
+  const [isAdminMode, setIsAdminMode] = useState(false);
+  const [adminCodeInput, setAdminCodeInput] = useState("");
+  const [showEmployeePanel, setShowEmployeePanel] = useState(false);
+  const [employees, setEmployees] = useState({});
+  const [employeeForm, setEmployeeForm] = useState({ name:"", band:initBand, division:initDivision });
+
+  // Firebase에서 직원 DB 실시간 불러오기
+  useEffect(() => {
+    let unsubscribe = null;
+    let cancelled = false;
+
+    const attachEmployees = () => {
+      if (cancelled) return;
+      if (!window.firebaseDB) {
+        setTimeout(attachEmployees, 200);
+        return;
+      }
+      unsubscribe = window.firebaseDB.listen("employees", (data) => {
+        if (cancelled) return;
+        setEmployees(data || {});
+      });
+    };
+
+    attachEmployees();
+    return () => {
+      cancelled = true;
+      if (typeof unsubscribe === "function") unsubscribe();
+    };
+  }, []);
+
+  const employeeList = sortEmployees(Object.entries(employees || {}).map(([id, raw]) => normalizeEmployee(raw, id)));
+  const activeEmployeeList = employeeList.filter(emp => emp.active);
+
+  const handleAdminLogin = () => {
+    if (adminCodeInput.trim() === ADMIN_EDIT_CODE) {
+      setIsAdminMode(true);
+      setAdminCodeInput("");
+      setShowEmployeePanel(true);
+    } else {
+      alert("편집코드가 맞지 않아요.");
+    }
+  };
+
+  const handleEmployeeSave = async () => {
+    const name = employeeForm.name.trim();
+    if (!name) { alert("직원 이름을 입력해주세요."); return; }
+    const id = makeEmployeeId(employees);
+    const now = new Date().toISOString();
+    await window.firebaseDB?.save(`employees/${id}`, {
+      id,
+      name,
+      band: employeeForm.band,
+      division: employeeForm.division,
+      active: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+    setEmployeeForm({ name:"", band: employeeForm.band, division: employeeForm.division });
+  };
+
+  const updateEmployee = (id, patch) => {
+    const before = employees?.[id] || {};
+    return window.firebaseDB?.save(`employees/${id}`, {
+      ...before,
+      ...patch,
+      id,
+      updatedAt: new Date().toISOString(),
+    });
+  };
+
+  const applyEmployeesToCurrentSchedule = () => {
+    const matched = activeEmployeeList.filter(emp => emp.band === band && emp.division === division);
+    if (matched.length < 4) {
+      alert(`${band} ${division} 직원이 ${matched.length}명입니다. 최소 4명이 필요해요.`);
+      return;
+    }
+    const count = Math.min(6, Math.max(4, matched.length));
+    const nextNames = matched.slice(0, count).map(emp => emp.name);
+    const nextOrders = normalizeShiftOrders(shiftOrders, division, count);
+    const nextLabels = normalizePositionLabels(positionLabels, division, count);
+    setWorkerCount(count);
+    setInputNames(nextNames);
+    setNames(nextNames);
+    setShiftOrders(nextOrders);
+    setPositionLabels(nextLabels);
+    setSchedule(generateSchedule(nextNames, selectedYear, selectedMonth, division, count, nextOrders, band));
+    saveSetting({ band, division, year:selectedYear, month:selectedMonth, workerCount:count, names:nextNames, shiftOrders:nextOrders, positionLabels:nextLabels });
+    alert(`${getMonthKey(selectedYear, selectedMonth)} ${band} ${division}에 직원 DB 명단을 적용했어요.`);
+  };
 
   // Firebase에서 현재 반+발전 설정을 실시간으로 불러오기
   useEffect(() => {
@@ -574,7 +702,7 @@ function App() {
 
   // 순찰자 표시 로직
   // - A근무: 기존 규칙 유지
-  // - C반 N근무: 기록 🚔1, 소내 🚔2
+  // - C반 N근무: 기록/소내 모두 🚔 표시
   const cleanPosLabel = (value) => String(value || "").replace(/\(.*\)/, "").trim();
 
   const getPatrolInfo = useCallback((day, posIdx) => {
@@ -585,8 +713,8 @@ function App() {
 
     // C반 1·2발전 N근무: 기록=1순찰, 소내=2순찰
     if (band === "C반" && day.shift === "N") {
-      if (label === "기록") return { label, mark: "🚔1" };
-      if (label === "소내") return { label, mark: "🚔2" };
+      if (label === "기록") return { label, mark: "🚔" };
+      if (label === "소내") return { label, mark: "🚔" };
       return null;
     }
 
@@ -745,6 +873,88 @@ function App() {
             오늘: {today.getFullYear()}년 {today.getMonth()+1}월 {today.getDate()}일 ({DOW_KR[today.getDay()]})
             &nbsp;·&nbsp; 🔴 주말/공휴일 표시
           </div>
+        </div>
+
+        {/* ── 관리자모드 / 직원 DB ── */}
+        <div style={{ background:"#111827", border:"1px solid #334155", borderRadius:14, padding:"14px 16px", marginBottom:14 }}>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, flexWrap:"wrap" }}>
+            <div>
+              <div style={{ fontSize:13, fontWeight:900, color:"#e2e8f0" }}>👥 직원 DB</div>
+              <div style={{ fontSize:11, color:"#64748b", marginTop:2 }}>
+                직원은 emp001 방식으로 자동 생성됩니다. 사번은 저장하지 않습니다.
+              </div>
+            </div>
+            {isAdminMode ? (
+              <div style={{ display:"flex", gap:6 }}>
+                <button onClick={() => setShowEmployeePanel(v => !v)} style={{ background:"#334155", border:"none", borderRadius:7, color:"#fff", fontSize:11, fontWeight:800, padding:"7px 10px", cursor:"pointer" }}>
+                  {showEmployeePanel ? "직원 DB 닫기" : "직원 DB 열기"}
+                </button>
+                <button onClick={() => { setIsAdminMode(false); setShowEmployeePanel(false); }} style={{ background:"#7f1d1d", border:"none", borderRadius:7, color:"#fecaca", fontSize:11, fontWeight:800, padding:"7px 10px", cursor:"pointer" }}>
+                  편집종료
+                </button>
+              </div>
+            ) : (
+              <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+                <input
+                  value={adminCodeInput}
+                  onChange={e => setAdminCodeInput(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && handleAdminLogin()}
+                  placeholder="편집코드"
+                  type="password"
+                  style={{ width:110, padding:"7px 9px", background:"#0f172a", border:"1px solid #334155", borderRadius:7, color:"#f1f5f9", fontSize:12, outline:"none" }}
+                />
+                <button onClick={handleAdminLogin} style={{ background:"linear-gradient(135deg,#0ea5e9,#2563eb)", border:"none", borderRadius:7, color:"#fff", fontSize:11, fontWeight:800, padding:"8px 10px", cursor:"pointer" }}>
+                  관리자모드
+                </button>
+              </div>
+            )}
+          </div>
+
+          {isAdminMode && showEmployeePanel && (
+            <div style={{ marginTop:14, borderTop:"1px solid #334155", paddingTop:14 }}>
+              <div style={{ display:"grid", gridTemplateColumns:"1.2fr 0.8fr 0.8fr auto", gap:7, marginBottom:10 }}>
+                <input
+                  value={employeeForm.name}
+                  onChange={e => setEmployeeForm(f => ({ ...f, name:e.target.value }))}
+                  placeholder="직원 이름"
+                  style={{ padding:"8px 9px", background:"#0f172a", border:"1px solid #334155", borderRadius:7, color:"#f1f5f9", fontSize:12, outline:"none" }}
+                />
+                <select value={employeeForm.band} onChange={e => setEmployeeForm(f => ({ ...f, band:e.target.value }))} style={{ ...selectStyle, fontSize:12, padding:"7px 9px" }}>
+                  {EMPLOYEE_BANDS.map(v => <option key={v} value={v}>{v}</option>)}
+                </select>
+                <select value={employeeForm.division} onChange={e => setEmployeeForm(f => ({ ...f, division:e.target.value }))} style={{ ...selectStyle, fontSize:12, padding:"7px 9px" }}>
+                  {EMPLOYEE_DIVISIONS.map(v => <option key={v} value={v}>{v}</option>)}
+                </select>
+                <button onClick={handleEmployeeSave} style={{ background:"linear-gradient(135deg,#10b981,#059669)", border:"none", borderRadius:7, color:"#fff", fontSize:12, fontWeight:900, padding:"8px 10px", cursor:"pointer", whiteSpace:"nowrap" }}>
+                  + 추가
+                </button>
+              </div>
+
+              <button onClick={applyEmployeesToCurrentSchedule} style={{ width:"100%", marginBottom:10, background:"linear-gradient(135deg,#f59e0b,#f97316)", border:"none", borderRadius:8, color:"#fff", fontSize:12, fontWeight:900, padding:"9px 10px", cursor:"pointer" }}>
+                📌 현재 {getMonthKey(selectedYear, selectedMonth)} {band} {division} 근무자에 직원 DB 명단 적용
+              </button>
+
+              <div style={{ maxHeight:260, overflowY:"auto", display:"flex", flexDirection:"column", gap:6 }}>
+                {employeeList.length === 0 ? (
+                  <div style={{ color:"#64748b", fontSize:12, textAlign:"center", padding:"12px" }}>아직 직원 DB가 비어있어요.</div>
+                ) : employeeList.map(emp => (
+                  <div key={emp.id} style={{ display:"grid", gridTemplateColumns:"58px 1fr 74px 88px 62px", gap:6, alignItems:"center", background: emp.active ? "#0f172a" : "#1f2937", border:"1px solid #263449", borderRadius:8, padding:"7px" }}>
+                    <div style={{ fontSize:10, color:"#64748b", fontWeight:800 }}>{emp.id}</div>
+                    <input value={emp.name} onChange={e => updateEmployee(emp.id, { name:e.target.value })} style={{ minWidth:0, padding:"6px 7px", background:"#111827", border:"1px solid #334155", borderRadius:6, color:"#f1f5f9", fontSize:12, fontWeight:800, outline:"none" }} />
+                    <select value={emp.band} onChange={e => updateEmployee(emp.id, { band:e.target.value })} style={{ ...selectStyle, fontSize:11, padding:"6px 7px" }}>
+                      {EMPLOYEE_BANDS.map(v => <option key={v} value={v}>{v}</option>)}
+                    </select>
+                    <select value={emp.division} onChange={e => updateEmployee(emp.id, { division:e.target.value })} style={{ ...selectStyle, fontSize:11, padding:"6px 7px" }}>
+                      {EMPLOYEE_DIVISIONS.map(v => <option key={v} value={v}>{v}</option>)}
+                    </select>
+                    <button onClick={() => updateEmployee(emp.id, { active: !emp.active })} style={{ background: emp.active ? "#14532d" : "#374151", border:"none", borderRadius:6, color: emp.active ? "#86efac" : "#cbd5e1", fontSize:10, fontWeight:900, padding:"6px", cursor:"pointer" }}>
+                      {emp.active ? "사용" : "숨김"}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* ── 이름 입력 ── */}
