@@ -1,5 +1,5 @@
 const { useState, useEffect, useRef, useCallback } = React;
-const APP_VERSION = "5.0.4";
+const APP_VERSION = "5.0.5";
 // ver5.0: 파일 분리(index.html / app.js / firebase.js / styles.css), ver4.9 기능 포함
 
 
@@ -365,6 +365,25 @@ function sortEmployees(list) {
   });
 }
 
+const POSITION_OPTIONS_BY_COUNT = {
+  4: ["입초", "기록", "검색", "소내"],
+  5: ["입초", "기록", "검색", "소내", "출검", "소내2"],
+  6: ["입초", "기록", "검색", "소내", "출검", "소내2", "출모", "소내3"],
+};
+
+function getPositionOptions(count, currentLabels, slotIdx) {
+  const current = String(currentLabels?.[slotIdx] || "").trim();
+  const used = new Set(
+    (currentLabels || [])
+      .map((label, idx) => idx === slotIdx ? "" : String(label || "").trim())
+      .filter(Boolean)
+  );
+  const base = POSITION_OPTIONS_BY_COUNT[count] || POSITION_OPTIONS_BY_COUNT[4];
+  const options = base.filter(label => !used.has(label) || label === current);
+  if (current && !options.includes(current)) options.unshift(current);
+  return options;
+}
+
 // ── 컴포넌트 ─────────────────────────────────────────────
 function App() {
   const today = new Date();
@@ -504,22 +523,21 @@ function App() {
 
   const applyEmployeesToCurrentSchedule = () => {
     const matched = activeEmployeeList.filter(emp => emp.band === band);
-    if (matched.length < 4) {
-      alert(`${band} 직원이 ${matched.length}명입니다. 최소 4명이 필요해요.`);
+    const count = workerCount; // v5.0.5: 직원 수가 많아도 현재 설정 인원수(기본 4명)를 유지
+    if (matched.length < count) {
+      alert(`${band} 직원이 ${matched.length}명입니다. 현재 근무자 수 ${count}명보다 적어요.`);
       return;
     }
-    const count = Math.min(6, Math.max(4, matched.length));
     const nextNames = matched.slice(0, count).map(emp => emp.name);
     const nextOrders = normalizeShiftOrders(shiftOrders, division, count);
     const nextLabels = normalizePositionLabels(positionLabels, division, count);
-    setWorkerCount(count);
     setInputNames(nextNames);
     setNames(nextNames);
     setShiftOrders(nextOrders);
     setPositionLabels(nextLabels);
     setSchedule(generateSchedule(nextNames, selectedYear, selectedMonth, division, count, nextOrders, band));
     saveSetting({ band, division, year:selectedYear, month:selectedMonth, workerCount:count, names:nextNames, shiftOrders:nextOrders, positionLabels:nextLabels });
-    alert(`${getMonthKey(selectedYear, selectedMonth)} ${band} 직원 DB 명단을 현재 ${division}에 적용했어요.`);
+    alert(`${getMonthKey(selectedYear, selectedMonth)} ${band} 직원 DB 명단 중 ${count}명을 현재 ${division}에 적용했어요.`);
   };
 
   // Firebase에서 현재 반+발전 설정을 실시간으로 불러오기
@@ -872,20 +890,26 @@ function App() {
               <span style={{ position:"absolute", right:8, top:"50%", transform:"translateY(-50%)", color:"#64748b", pointerEvents:"none", fontSize:11 }}>▼</span>
             </div>
 
-            {/* 근무자 수 */}
-            <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-              <span style={{ fontSize:12, color:"#64748b", fontWeight:600, whiteSpace:"nowrap" }}>근무자 수</span>
-              <div style={{ display:"flex", background:"#0f172a", border:"1.5px solid #334155", borderRadius:9, padding:3, gap:3 }}>
-                {[4,5,6].map(n => (
-                  <button key={n} onClick={() => handleWorkerCountChange(n)} style={{
-                    width:34, height:30, borderRadius:7, border:"none", fontSize:13, fontWeight:800,
-                    cursor:"pointer", transition:"all 0.15s",
-                    background: workerCount === n ? "linear-gradient(135deg,#0ea5e9,#2563eb)" : "transparent",
-                    color: workerCount === n ? "#fff" : "#64748b",
-                  }}>{n}</button>
-                ))}
+            {/* 근무자 수: 관리자모드에서만 수정 */}
+            {isAdminMode ? (
+              <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                <span style={{ fontSize:12, color:"#64748b", fontWeight:600, whiteSpace:"nowrap" }}>근무자 수</span>
+                <div style={{ display:"flex", background:"#0f172a", border:"1.5px solid #334155", borderRadius:9, padding:3, gap:3 }}>
+                  {[4,5,6].map(n => (
+                    <button key={n} onClick={() => handleWorkerCountChange(n)} style={{
+                      width:34, height:30, borderRadius:7, border:"none", fontSize:13, fontWeight:800,
+                      cursor:"pointer", transition:"all 0.15s",
+                      background: workerCount === n ? "linear-gradient(135deg,#0ea5e9,#2563eb)" : "transparent",
+                      color: workerCount === n ? "#fff" : "#64748b",
+                    }}>{n}</button>
+                  ))}
+                </div>
               </div>
-            </div>
+            ) : (
+              <div style={{ fontSize:12, color:"#64748b", fontWeight:800, padding:"7px 9px", background:"#0f172a", border:"1px solid #334155", borderRadius:8 }}>
+                근무자 {workerCount}명
+              </div>
+            )}
 
             <div style={{ fontSize:26, fontWeight:900, letterSpacing:"-1px" }}>👨‍✈️ 근무표 ver{APP_VERSION}</div>
           </div>
@@ -952,9 +976,9 @@ function App() {
                 📌 현재 {getMonthKey(selectedYear, selectedMonth)} {band} 직원 DB 명단을 {division}에 적용
               </button>
 
-              <div style={{ maxHeight:300, overflowY:"auto", display:"flex", flexDirection:"column", gap:10 }}>
+              <div style={{ maxHeight:360, overflowY:"auto", display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:10 }}>
                 {employeeList.length === 0 ? (
-                  <div style={{ color:"#64748b", fontSize:12, textAlign:"center", padding:"12px" }}>아직 직원 DB가 비어있어요.</div>
+                  <div style={{ color:"#64748b", fontSize:12, textAlign:"center", padding:"12px", gridColumn:"1 / -1" }}>아직 직원 DB가 비어있어요.</div>
                 ) : employeeGroups.map(group => (
                   <div key={group.band} style={{ background:"#0b1220", border:"1px solid #263449", borderRadius:10, padding:"8px" }}>
                     <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:7 }}>
@@ -963,15 +987,19 @@ function App() {
                     </div>
                     <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
                       {group.employees.map(emp => (
-                        <div key={emp.id} style={{ display:"grid", gridTemplateColumns:"58px 1fr 74px 62px", gap:6, alignItems:"center", background: emp.active ? "#0f172a" : "#1f2937", border:"1px solid #263449", borderRadius:8, padding:"7px" }}>
-                          <div style={{ fontSize:10, color:"#64748b", fontWeight:800 }}>{emp.id}</div>
-                          <input value={emp.name} onChange={e => updateEmployee(emp.id, { name:e.target.value })} style={{ minWidth:0, padding:"6px 7px", background:"#111827", border:"1px solid #334155", borderRadius:6, color:"#f1f5f9", fontSize:12, fontWeight:800, outline:"none" }} />
-                          <select value={emp.band} onChange={e => updateEmployee(emp.id, { band:e.target.value })} style={{ ...selectStyle, fontSize:11, padding:"6px 7px" }}>
-                            {EMPLOYEE_BANDS.map(v => <option key={v} value={v}>{v}</option>)}
-                          </select>
-                          <button onClick={() => updateEmployee(emp.id, { active: !emp.active })} style={{ background: emp.active ? "#14532d" : "#374151", border:"none", borderRadius:6, color: emp.active ? "#86efac" : "#cbd5e1", fontSize:10, fontWeight:900, padding:"6px", cursor:"pointer" }}>
-                            {emp.active ? "사용" : "숨김"}
-                          </button>
+                        <div key={emp.id} style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:6, alignItems:"center", background: emp.active ? "#0f172a" : "#1f2937", border:"1px solid #263449", borderRadius:8, padding:"7px" }}>
+                          <div style={{ minWidth:0 }}>
+                            <div style={{ fontSize:9, color:"#64748b", fontWeight:800, marginBottom:3 }}>{emp.id}</div>
+                            <input value={emp.name} onChange={e => updateEmployee(emp.id, { name:e.target.value })} style={{ width:"100%", minWidth:0, padding:"6px 7px", background:"#111827", border:"1px solid #334155", borderRadius:6, color:"#f1f5f9", fontSize:12, fontWeight:800, outline:"none" }} />
+                          </div>
+                          <div style={{ display:"flex", flexDirection:"column", gap:5 }}>
+                            <select value={emp.band} onChange={e => updateEmployee(emp.id, { band:e.target.value })} style={{ ...selectStyle, fontSize:10, padding:"5px 6px" }}>
+                              {EMPLOYEE_BANDS.map(v => <option key={v} value={v}>{v}</option>)}
+                            </select>
+                            <button onClick={() => updateEmployee(emp.id, { active: !emp.active })} style={{ background: emp.active ? "#14532d" : "#374151", border:"none", borderRadius:6, color: emp.active ? "#86efac" : "#cbd5e1", fontSize:10, fontWeight:900, padding:"5px", cursor:"pointer" }}>
+                              {emp.active ? "사용" : "숨김"}
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -987,7 +1015,7 @@ function App() {
           <div style={{ fontSize:12, fontWeight:700, color:"#64748b", marginBottom:12, textTransform:"uppercase", letterSpacing:"0.05em" }}>
             근무자 이름 ({workerCount}명)
             <span style={{ marginLeft:8, fontWeight:500, textTransform:"none", fontSize:11, color:"#475569" }}>
-              — 현재 선택한 반의 직원 DB만 표시 · 중복 선택 방지 · Firebase 자동 저장
+              — 현재 선택한 반의 직원 DB만 표시 · 이름/근무지 중복 선택 방지 · Firebase 자동 저장
             </span>
           </div>
           <div style={{ display:"grid", gridTemplateColumns:`repeat(${workerCount},1fr)`, gap:8, marginBottom:12 }}>
@@ -995,18 +1023,19 @@ function App() {
               <div key={i}>
                 <div style={{ fontSize:10, color:"#475569", marginBottom:4, fontWeight:600, display:"flex", alignItems:"center", gap:4 }}>
                   <span style={{ whiteSpace:"nowrap" }}>{i+1}번째 ·</span>
-                  <input
+                  <select
                     value={displayPositionLabels[i] || ""}
                     onChange={e => {
                       const next = normalizePositionLabels(positionLabels, division, workerCount);
                       next[i] = e.target.value;
                       setPositionLabels(next);
                     }}
-                    placeholder="포지션명"
                     style={{ width:"100%", minWidth:0, padding:"3px 5px", background:"#111827", border:"1px solid #334155", borderRadius:5, color:"#94a3b8", fontSize:10, fontWeight:800, outline:"none" }}
-                    onFocus={e => e.target.style.borderColor="#38bdf8"}
-                    onBlur={e => e.target.style.borderColor="#334155"}
-                  />
+                  >
+                    {getPositionOptions(workerCount, displayPositionLabels, i).map(label => (
+                      <option key={label} value={label}>{label}</option>
+                    ))}
+                  </select>
                 </div>
                 <select
                   value={inputNames[i] || ""}
