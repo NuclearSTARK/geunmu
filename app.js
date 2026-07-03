@@ -1,5 +1,5 @@
 const { useState, useEffect, useRef, useCallback } = React;
-const APP_VERSION = "5.0.2";
+const APP_VERSION = "5.0.3";
 // ver5.0: 파일 분리(index.html / app.js / firebase.js / styles.css), ver4.9 기능 포함
 
 
@@ -442,7 +442,34 @@ function App() {
   }, []);
 
   const employeeList = sortEmployees(Object.entries(employees || {}).map(([id, raw]) => normalizeEmployee(raw, id)));
-  const activeEmployeeList = employeeList.filter(emp => emp.active);
+  const activeEmployeeList = employeeList.filter(emp => emp.active && emp.name);
+  const employeeGroups = EMPLOYEE_DIVISIONS
+    .map(div => ({ division: div, employees: employeeList.filter(emp => emp.division === div) }))
+    .filter(group => group.employees.length > 0);
+
+  const getWorkerOptions = useCallback((slotIdx) => {
+    const current = String(inputNames[slotIdx] || "").trim();
+    const usedNames = new Set(
+      inputNames
+        .map((name, idx) => idx === slotIdx ? "" : String(name || "").trim())
+        .filter(Boolean)
+    );
+    const options = activeEmployeeList.filter(emp => emp.name && (!usedNames.has(emp.name) || emp.name === current));
+    if (current && !options.some(emp => emp.name === current)) {
+      options.unshift({ id: `current-${slotIdx}`, name: current, band: "기존", division: "현재값", active: true });
+    }
+    return options;
+  }, [activeEmployeeList, inputNames]);
+
+  const setWorkerNameAt = useCallback((slotIdx, value) => {
+    const next = [...inputNames];
+    next[slotIdx] = value;
+    setInputNames(next);
+    const trimmed = next.map(v => String(v || "").trim());
+    if (trimmed.every(v => v !== "") && new Set(trimmed).size === workerCount) {
+      setNames(trimmed);
+    }
+  }, [inputNames, workerCount]);
 
   const handleAdminLogin = () => {
     if (adminCodeInput.trim() === ADMIN_EDIT_CODE) {
@@ -934,22 +961,32 @@ function App() {
                 📌 현재 {getMonthKey(selectedYear, selectedMonth)} {band} {division} 근무자에 직원 DB 명단 적용
               </button>
 
-              <div style={{ maxHeight:260, overflowY:"auto", display:"flex", flexDirection:"column", gap:6 }}>
+              <div style={{ maxHeight:300, overflowY:"auto", display:"flex", flexDirection:"column", gap:10 }}>
                 {employeeList.length === 0 ? (
                   <div style={{ color:"#64748b", fontSize:12, textAlign:"center", padding:"12px" }}>아직 직원 DB가 비어있어요.</div>
-                ) : employeeList.map(emp => (
-                  <div key={emp.id} style={{ display:"grid", gridTemplateColumns:"58px 1fr 74px 88px 62px", gap:6, alignItems:"center", background: emp.active ? "#0f172a" : "#1f2937", border:"1px solid #263449", borderRadius:8, padding:"7px" }}>
-                    <div style={{ fontSize:10, color:"#64748b", fontWeight:800 }}>{emp.id}</div>
-                    <input value={emp.name} onChange={e => updateEmployee(emp.id, { name:e.target.value })} style={{ minWidth:0, padding:"6px 7px", background:"#111827", border:"1px solid #334155", borderRadius:6, color:"#f1f5f9", fontSize:12, fontWeight:800, outline:"none" }} />
-                    <select value={emp.band} onChange={e => updateEmployee(emp.id, { band:e.target.value })} style={{ ...selectStyle, fontSize:11, padding:"6px 7px" }}>
-                      {EMPLOYEE_BANDS.map(v => <option key={v} value={v}>{v}</option>)}
-                    </select>
-                    <select value={emp.division} onChange={e => updateEmployee(emp.id, { division:e.target.value })} style={{ ...selectStyle, fontSize:11, padding:"6px 7px" }}>
-                      {EMPLOYEE_DIVISIONS.map(v => <option key={v} value={v}>{v}</option>)}
-                    </select>
-                    <button onClick={() => updateEmployee(emp.id, { active: !emp.active })} style={{ background: emp.active ? "#14532d" : "#374151", border:"none", borderRadius:6, color: emp.active ? "#86efac" : "#cbd5e1", fontSize:10, fontWeight:900, padding:"6px", cursor:"pointer" }}>
-                      {emp.active ? "사용" : "숨김"}
-                    </button>
+                ) : employeeGroups.map(group => (
+                  <div key={group.division} style={{ background:"#0b1220", border:"1px solid #263449", borderRadius:10, padding:"8px" }}>
+                    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:7 }}>
+                      <div style={{ fontSize:12, fontWeight:900, color:"#f1f5f9" }}>📍 {group.division}</div>
+                      <div style={{ fontSize:10, color:"#64748b", fontWeight:800 }}>{group.employees.length}명</div>
+                    </div>
+                    <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+                      {group.employees.map(emp => (
+                        <div key={emp.id} style={{ display:"grid", gridTemplateColumns:"58px 1fr 74px 88px 62px", gap:6, alignItems:"center", background: emp.active ? "#0f172a" : "#1f2937", border:"1px solid #263449", borderRadius:8, padding:"7px" }}>
+                          <div style={{ fontSize:10, color:"#64748b", fontWeight:800 }}>{emp.id}</div>
+                          <input value={emp.name} onChange={e => updateEmployee(emp.id, { name:e.target.value })} style={{ minWidth:0, padding:"6px 7px", background:"#111827", border:"1px solid #334155", borderRadius:6, color:"#f1f5f9", fontSize:12, fontWeight:800, outline:"none" }} />
+                          <select value={emp.band} onChange={e => updateEmployee(emp.id, { band:e.target.value })} style={{ ...selectStyle, fontSize:11, padding:"6px 7px" }}>
+                            {EMPLOYEE_BANDS.map(v => <option key={v} value={v}>{v}</option>)}
+                          </select>
+                          <select value={emp.division} onChange={e => updateEmployee(emp.id, { division:e.target.value })} style={{ ...selectStyle, fontSize:11, padding:"6px 7px" }}>
+                            {EMPLOYEE_DIVISIONS.map(v => <option key={v} value={v}>{v}</option>)}
+                          </select>
+                          <button onClick={() => updateEmployee(emp.id, { active: !emp.active })} style={{ background: emp.active ? "#14532d" : "#374151", border:"none", borderRadius:6, color: emp.active ? "#86efac" : "#cbd5e1", fontSize:10, fontWeight:900, padding:"6px", cursor:"pointer" }}>
+                            {emp.active ? "사용" : "숨김"}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -962,7 +999,7 @@ function App() {
           <div style={{ fontSize:12, fontWeight:700, color:"#64748b", marginBottom:12, textTransform:"uppercase", letterSpacing:"0.05em" }}>
             근무자 이름 ({workerCount}명)
             <span style={{ marginLeft:8, fontWeight:500, textTransform:"none", fontSize:11, color:"#475569" }}>
-              — 포지션명은 직접 수정 가능 · Firebase 자동 저장
+              — 이름은 직원 DB에서 선택 · 중복 선택 방지 · Firebase 자동 저장
             </span>
           </div>
           <div style={{ display:"grid", gridTemplateColumns:`repeat(${workerCount},1fr)`, gap:8, marginBottom:12 }}>
@@ -983,23 +1020,18 @@ function App() {
                     onBlur={e => e.target.style.borderColor="#334155"}
                   />
                 </div>
-                <input
+                <select
                   value={inputNames[i] || ""}
-                  onChange={e => {
-                    const n=[...inputNames];
-                    n[i]=e.target.value;
-                    setInputNames(n);
-                    const trimmed = n.map(v => String(v || "").trim());
-                    if (trimmed.every(v => v !== "") && new Set(trimmed).size === workerCount) {
-                      setNames(trimmed);
-                    }
-                  }}
-                  onKeyDown={e => e.key==="Enter" && handleGenerate()}
-                  placeholder={`이름 ${i+1}`}
-                  style={{ width:"100%", padding:"9px 10px", background:"#0f172a", border:"1.5px solid #334155", borderRadius:8, color:"#f1f5f9", fontSize:14, fontWeight:600, outline:"none", boxSizing:"border-box" }}
-                  onFocus={e => e.target.style.borderColor="#f59e0b"}
-                  onBlur={e => e.target.style.borderColor="#334155"}
-                />
+                  onChange={e => setWorkerNameAt(i, e.target.value)}
+                  style={{ width:"100%", padding:"9px 10px", background:"#0f172a", border:"1.5px solid #334155", borderRadius:8, color:"#f1f5f9", fontSize:14, fontWeight:800, outline:"none", boxSizing:"border-box" }}
+                >
+                  <option value="">직원 선택</option>
+                  {getWorkerOptions(i).map(emp => (
+                    <option key={`${emp.id}-${emp.name}`} value={emp.name}>
+                      {emp.name} · {emp.band} {emp.division}
+                    </option>
+                  ))}
+                </select>
               </div>
             ))}
           </div>
