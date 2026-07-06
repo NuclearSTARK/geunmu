@@ -1,5 +1,5 @@
 const { useState, useEffect, useRef, useCallback } = React;
-const APP_VERSION = "5.4.6-icon-fix";
+const APP_VERSION = "5.4.7-icon-cache-bust";
 // ver5.0: 파일 분리(index.html / app.js / firebase.js / styles.css), ver4.9 기능 포함
 
 
