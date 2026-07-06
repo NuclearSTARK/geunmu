@@ -421,9 +421,7 @@ function saveSetting(data) {
 }
 
 // ── 직원 DB / 관리자모드 ──────────────────────────────────
-// v5.0.2: 우선은 간단한 편집코드 방식입니다.
-// 이후 Firebase Authentication을 붙이면 실제 계정 기반 권한으로 바꿀 예정입니다.
-const ADMIN_EDIT_CODE = "seul2026";
+// v5.6.0: 관리자 암호는 최초 1회 사용자가 직접 설정합니다.
 const EMPLOYEE_BANDS = ["A반","B반","C반","D반"];
 function makeEmployeeId(employees) {
   const nums = Object.keys(employees || {})
@@ -522,6 +520,11 @@ function App() {
   const [personalName, setPersonalName] = useState(personal.name || '');
 
   const [adminCodeInput, setAdminCodeInput] = useState('');
+  const [adminNewCode, setAdminNewCode] = useState('');
+  const [adminNewCodeConfirm, setAdminNewCodeConfirm] = useState('');
+  const [adminChangeCode, setAdminChangeCode] = useState({ current:'', next:'', confirm:'' });
+  const [adminAuth, setAdminAuth] = useState(null);
+  const [adminAuthLoaded, setAdminAuthLoaded] = useState(false);
   const [isAdminMode, setIsAdminMode] = useState(false);
   const [employees, setEmployees] = useState({});
   const [employeeForm, setEmployeeForm] = useState({ name:'', band:'A반', outputName:'' });
@@ -592,6 +595,23 @@ function App() {
     const getPatrolSettingFor = (b, d) => normalizeSavedPatrolSetting(patrolSettings[patrolSettingKey(b, d)]);
   const getPatrolFormSettingFor = (b, d) => getPatrolSettingFor(b, d) || getDefaultPatrolSetting();
   const patrolPositionOptions = normalizePositionLabels(getDefaultPositionLabels(patrolForm.division, workerCount), patrolForm.division, workerCount).map(cleanLabel);
+
+
+  useEffect(() => {
+    let unsubscribe = null;
+    let cancelled = false;
+    const attach = () => {
+      if (cancelled) return;
+      if (!window.firebaseDB) { setTimeout(attach, 200); return; }
+      unsubscribe = window.firebaseDB.listen('settings/adminAuth', data => {
+        if (cancelled) return;
+        setAdminAuth(data && typeof data === 'object' ? data : null);
+        setAdminAuthLoaded(true);
+      });
+    };
+    attach();
+    return () => { cancelled = true; if (typeof unsubscribe === 'function') unsubscribe(); };
+  }, []);
 
   useEffect(() => {
     let unsubscribe = null;
@@ -867,9 +887,46 @@ function App() {
     setTimeout(() => setSavedToast(false), 1800);
   };
 
+  const cleanAdminCode = (value) => String(value || '').replace(/[^0-9]/g, '').slice(0, 6);
+  const isValidAdminCode = (value) => /^\d{4,6}$/.test(String(value || ''));
+
   const handleAdminLogin = () => {
-    if (adminCodeInput.trim() === ADMIN_EDIT_CODE) { setIsAdminMode(true); setAdminCodeInput(''); }
+    const code = cleanAdminCode(adminCodeInput);
+    if (!adminAuthLoaded) { alert('관리자 암호 정보를 불러오는 중입니다. 잠시 후 다시 시도해주세요.'); return; }
+    if (!adminAuth?.password) { alert('먼저 관리자 암호를 설정해주세요.'); return; }
+    if (code === String(adminAuth.password)) { setIsAdminMode(true); setAdminCodeInput(''); }
     else alert('관리자 암호가 맞지 않아요.');
+  };
+
+  const handleAdminPasswordSetup = async () => {
+    const next = cleanAdminCode(adminNewCode);
+    const confirm = cleanAdminCode(adminNewCodeConfirm);
+    if (!isValidAdminCode(next)) { alert('관리자 암호는 숫자 4~6자리로 설정해주세요.'); return; }
+    if (next !== confirm) { alert('확인 암호가 일치하지 않아요.'); return; }
+    if (!window.firebaseDB?.save) { alert('Firebase 연결 후 다시 시도해주세요.'); return; }
+    const payload = { password: next, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+    await window.firebaseDB.save('settings/adminAuth', payload);
+    setAdminAuth(payload);
+    setAdminNewCode('');
+    setAdminNewCodeConfirm('');
+    setIsAdminMode(true);
+    setSavedToast(true);
+    setTimeout(() => setSavedToast(false), 1200);
+  };
+
+  const handleAdminPasswordChange = async () => {
+    const current = cleanAdminCode(adminChangeCode.current);
+    const next = cleanAdminCode(adminChangeCode.next);
+    const confirm = cleanAdminCode(adminChangeCode.confirm);
+    if (!adminAuth?.password) { alert('먼저 관리자 암호를 설정해주세요.'); return; }
+    if (current !== String(adminAuth.password)) { alert('현재 암호가 맞지 않아요.'); return; }
+    if (!isValidAdminCode(next)) { alert('새 암호는 숫자 4~6자리로 설정해주세요.'); return; }
+    if (next !== confirm) { alert('새 암호 확인이 일치하지 않아요.'); return; }
+    const payload = { ...(adminAuth || {}), password: next, updatedAt: new Date().toISOString() };
+    await window.firebaseDB?.save('settings/adminAuth', payload);
+    setAdminAuth(payload);
+    setAdminChangeCode({ current:'', next:'', confirm:'' });
+    alert('관리자 암호가 변경되었습니다.');
   };
 
   const handleEmployeeAdd = async () => {
@@ -1579,8 +1636,16 @@ function App() {
 
             {settingsTab === 'admin' && <div>
               {!isAdminMode ? <div style={{ display:'grid', gap:10 }}>
-                <input type="password" inputMode="numeric" value={adminCodeInput} onChange={e=>setAdminCodeInput(e.target.value)} onKeyDown={e=>e.key==='Enter'&&handleAdminLogin()} placeholder="관리자 암호" style={{ ...selectStyle, width:'100%', boxSizing:'border-box' }} />
-                <button onClick={handleAdminLogin} style={{ ...buttonBase, background:'linear-gradient(135deg,#0ea5e9,#2563eb)', padding:'12px 13px', width:'100%' }}>관리자설정 열기</button>
+                {!adminAuthLoaded ? <div style={{ background:'#0f172a', border:'1px solid #334155', borderRadius:12, padding:12, color:'#cbd5e1', fontSize:13, fontWeight:900 }}>관리자 암호 정보를 불러오는 중...</div> : !adminAuth?.password ? <div style={{ display:'grid', gap:10, background:'#0f172a', border:'1px solid #334155', borderRadius:14, padding:12 }}>
+                  <div style={{ fontSize:16, fontWeight:950, color:'#f8fafc' }}>관리자 암호 최초 설정</div>
+                  <div style={{ fontSize:11, color:'#94a3b8', lineHeight:1.5 }}>처음 한 번만 숫자 4~6자리 암호를 설정해주세요. 이후 관리자설정은 이 암호로 들어갑니다.</div>
+                  <input type="password" inputMode="numeric" pattern="[0-9]*" autoComplete="new-password" value={adminNewCode} onChange={e=>setAdminNewCode(cleanAdminCode(e.target.value))} placeholder="새 암호 4~6자리" style={{ ...selectStyle, width:'100%', boxSizing:'border-box', fontSize:16 }} />
+                  <input type="password" inputMode="numeric" pattern="[0-9]*" autoComplete="new-password" value={adminNewCodeConfirm} onChange={e=>setAdminNewCodeConfirm(cleanAdminCode(e.target.value))} onKeyDown={e=>e.key==='Enter'&&handleAdminPasswordSetup()} placeholder="새 암호 확인" style={{ ...selectStyle, width:'100%', boxSizing:'border-box', fontSize:16 }} />
+                  <button onClick={handleAdminPasswordSetup} style={{ ...buttonBase, background:'linear-gradient(135deg,#0ea5e9,#2563eb)', padding:'12px 13px', width:'100%' }}>관리자 암호 설정</button>
+                </div> : <>
+                  <input type="password" inputMode="numeric" pattern="[0-9]*" autoComplete="current-password" value={adminCodeInput} onChange={e=>setAdminCodeInput(cleanAdminCode(e.target.value))} onKeyDown={e=>e.key==='Enter'&&handleAdminLogin()} placeholder="관리자 암호" style={{ ...selectStyle, width:'100%', boxSizing:'border-box', fontSize:16 }} />
+                  <button onClick={handleAdminLogin} style={{ ...buttonBase, background:'linear-gradient(135deg,#0ea5e9,#2563eb)', padding:'12px 13px', width:'100%' }}>관리자설정 열기</button>
+                </>}
               </div> : <div style={{ display:'grid', gap:12 }}>
                 <div style={{ background:'#111827', border:'1px solid #334155', borderRadius:14, overflow:'hidden' }}>
                   <div style={{ padding:'12px 12px', fontWeight:950, fontSize:16, borderBottom:'1px solid #334155' }}>👥 직원 DB 관리</div>
@@ -1681,6 +1746,13 @@ function App() {
                   <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:6 }}>{[4,5,6].map(n=><button key={n} onClick={()=>handleWorkerCountChange(n)} style={{ ...buttonBase, height:38, background:workerCount===n?'#2563eb':'#334155' }}>{n}명</button>)}</div>
                 </div>
                 <div style={{ textAlign:'center', color:'#64748b', fontSize:11, fontWeight:800 }}>Seul Police · v{APP_VERSION}</div>
+                <div style={{ background:'#111827', border:'1px solid #334155', borderRadius:14, padding:12, display:'grid', gap:8 }}>
+                  <div style={{ fontWeight:950, fontSize:15, color:'#f8fafc' }}>🔐 관리자 암호 변경</div>
+                  <input type="password" inputMode="numeric" pattern="[0-9]*" value={adminChangeCode.current} onChange={e=>setAdminChangeCode(v=>({...v,current:cleanAdminCode(e.target.value)}))} placeholder="현재 암호" style={{ ...selectStyle, width:'100%', boxSizing:'border-box', fontSize:16 }} />
+                  <input type="password" inputMode="numeric" pattern="[0-9]*" value={adminChangeCode.next} onChange={e=>setAdminChangeCode(v=>({...v,next:cleanAdminCode(e.target.value)}))} placeholder="새 암호 4~6자리" style={{ ...selectStyle, width:'100%', boxSizing:'border-box', fontSize:16 }} />
+                  <input type="password" inputMode="numeric" pattern="[0-9]*" value={adminChangeCode.confirm} onChange={e=>setAdminChangeCode(v=>({...v,confirm:cleanAdminCode(e.target.value)}))} placeholder="새 암호 확인" style={{ ...selectStyle, width:'100%', boxSizing:'border-box', fontSize:16 }} />
+                  <button onClick={handleAdminPasswordChange} style={{ ...buttonBase, background:'#334155', padding:'10px 12px' }}>암호 변경</button>
+                </div>
                 <button onClick={()=>setIsAdminMode(false)} style={{ ...buttonBase, background:'#7f1d1d', padding:'11px 12px' }}>관리자모드 종료</button>
               </div>}
             </div>}          </div>
