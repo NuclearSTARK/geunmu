@@ -565,7 +565,7 @@ function App() {
   const visiblePositionLabels = workerCount === 4
     ? (isABDOnePlant ? ['입초', '소내', '검색', '기록'] : (isCOnePlant ? ['입초', '기록', '검색', '소내'] : displayPositionLabels))
     : displayPositionLabels;
-  const yearOptions = Array.from({ length: 6 }, (_, i) => 2023 + i);
+  const yearOptions = Array.from({ length: 15 }, (_, i) => 2026 + i);
   const monthOptions = Array.from({ length: 12 }, (_, i) => i + 1);
   const todayDay = today.getFullYear() === selectedYear && today.getMonth()+1 === selectedMonth ? today.getDate() : null;
 
@@ -1343,7 +1343,7 @@ function App() {
     return { name: targetName, band: profileBand, division: profileDivision, shift: row.shift, position: foundLabel || '미배정', status: foundLabel ? '확인됨' : '미배정', note: foundLabel ? '' : '배치표를 생성하거나 근무자명을 확인해주세요.' };
   })();
 
-  const selectStyle = { padding:'8px 12px', background:'#0f172a', border:'1.5px solid #334155', borderRadius:8, color:'#f1f5f9', fontSize:14, fontWeight:800, outline:'none' };
+  const selectStyle = { padding:'8px 12px', background:'#0f172a', border:'1.5px solid #334155', borderRadius:8, color:'#f1f5f9', fontSize:16, fontWeight:800, outline:'none' };
   const buttonBase = { border:'none', borderRadius:8, color:'#fff', fontWeight:900, cursor:'pointer' };
   const gridCols = `82px 42px ${visiblePositionLabels.map(() => '1fr').join(' ')}`;
 
@@ -1410,7 +1410,7 @@ function App() {
         <div style={{ background:'#111827', border:'1px solid #334155', borderRadius:12, padding:'8px 8px', marginBottom:10, overflow:'hidden' }}>
           <button onClick={() => setWorkSettingOpen(v => !v)} style={{ width:'100%', border:'none', background:'transparent', color:'#f8fafc', fontSize:13, fontWeight:950, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'space-between', padding:0 }}>
             <span>근무지설정</span>
-            <span style={{ color:'#94a3b8', fontSize:14 }}>{workSettingOpen ? '▾' : '▸'}</span>
+            <span style={{ color:'#94a3b8', fontSize:16 }}>{workSettingOpen ? '▾' : '▸'}</span>
           </button>
 
           {workSettingOpen && <div style={{ marginTop:8, display:'grid', gap:7, width:'100%', overflow:'hidden' }}>
@@ -1507,7 +1507,7 @@ function App() {
 
         <div style={{ background:'#1e293b', border:'1px solid #334155', borderRadius:14, overflow:'hidden' }}>
           <div style={{ background:'#0f172a', padding:'11px 14px', borderBottom:'1px solid #334155', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-            <span style={{ fontWeight:900, fontSize:14 }}>{selectedYear}년 {selectedMonth}월 {band} {division}</span>
+            <span style={{ fontWeight:900, fontSize:16 }}>{selectedYear}년 {selectedMonth}월 {band} {division}</span>
             <span style={{ fontSize:11, color:'#94a3b8' }}>🚔 순찰자 · 🔴 주말/공휴일</span>
           </div>
           <div style={{ display:'grid', gridTemplateColumns:gridCols, background:'#0f172a', borderBottom:'1px solid #334155', padding:'0 10px' }}>
@@ -1579,7 +1579,7 @@ function App() {
 
             {settingsTab === 'admin' && <div>
               {!isAdminMode ? <div style={{ display:'grid', gap:10 }}>
-                <input type="password" value={adminCodeInput} onChange={e=>setAdminCodeInput(e.target.value)} onKeyDown={e=>e.key==='Enter'&&handleAdminLogin()} placeholder="관리자 암호" style={{ ...selectStyle, width:'100%', boxSizing:'border-box' }} />
+                <input type="password" inputMode="numeric" value={adminCodeInput} onChange={e=>setAdminCodeInput(e.target.value)} onKeyDown={e=>e.key==='Enter'&&handleAdminLogin()} placeholder="관리자 암호" style={{ ...selectStyle, width:'100%', boxSizing:'border-box' }} />
                 <button onClick={handleAdminLogin} style={{ ...buttonBase, background:'linear-gradient(135deg,#0ea5e9,#2563eb)', padding:'12px 13px', width:'100%' }}>관리자설정 열기</button>
               </div> : <div style={{ display:'grid', gap:12 }}>
                 <div style={{ background:'#111827', border:'1px solid #334155', borderRadius:14, overflow:'hidden' }}>
@@ -1610,7 +1610,7 @@ function App() {
                         <button onClick={()=>clearBandEmployees(b)} style={{ border:'none', borderRadius:9, background:'#7f1d1d', color:'#fecaca', padding:'9px 10px', fontSize:12, fontWeight:950, cursor:'pointer', width:'100%' }}>이 반 전체삭제</button>
                         {employeeList.filter(emp=>emp.band===b && emp.active).map(emp => <div key={emp.id} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:10, background:'#0f172a', border:'1px solid #334155', borderRadius:10, padding:'9px 10px' }}>
                           <div style={{ minWidth:0 }}>
-                            <div style={{ fontSize:14, fontWeight:950 }}>{getEmployeeDisplayName(emp)}</div>
+                            <div style={{ fontSize:16, fontWeight:950 }}>{getEmployeeDisplayName(emp)}</div>
                             <div style={{ fontSize:11, color:'#64748b', fontWeight:800 }}>{emp.name}</div>
                           </div>
                           <button onClick={()=>deleteEmployee(emp.id)} style={{ border:'none', background:'#7f1d1d', color:'#fecaca', borderRadius:999, cursor:'pointer', fontWeight:950, width:30, height:30, flex:'0 0 auto' }}>×</button>
