@@ -1,5 +1,5 @@
 const { useState, useEffect, useRef, useCallback } = React;
-const APP_VERSION = "5.5.7-a1-worker-override-clear";
+const APP_VERSION = "5.5.8-cband-shift-order-fix";
 // ver5.0: 파일 분리(index.html / app.js / firebase.js / styles.css), ver4.9 기능 포함
 
 
@@ -238,6 +238,19 @@ function generateSchedule(names, year, month, division, workerCount, shiftOrders
   // 예) 표시순서 [입초,기록,검색,소내] → 1 4 3 2 / 4 3 2 1
   const cycleIndexOrder = getCycleOrder(normalizedOrders, wc);
   let rollingNamesOrder = getDisplayOrderNames(cycleIndexOrder, names, wc);
+
+  // v5.5.8: C반 전용 근무별 순서 엔진
+  // C반은 N/A/D 근무가 각각 독립된 회전 패턴을 가집니다.
+  // 예) N근무는 N근무끼리 1 2 3 4 → 4 1 2 3 → 3 4 1 2
+  //     A근무는 A근무끼리 별도 회전, D근무도 D근무끼리 별도 회전
+  // A/B/D반은 기존 전체 근무일 기준 회전 로직을 유지합니다.
+  const useShiftSpecificRotation = band === "C반";
+  const shiftRollingOrders = {
+    N: getDisplayOrderNames(normalizedOrders.N, names, wc),
+    A: getDisplayOrderNames(normalizedOrders.A, names, wc),
+    D: getDisplayOrderNames(normalizedOrders.D, names, wc),
+  };
+
   // v5.5.7 핵심 수정
   // 예전 수동 날짜 수정값(manualOverrides)이 남아 있으면 특정 반/발전소, 특히 A반 1발전에서
   // 관리자 화면에서 근무자를 바꿔도 표가 과거 고정값으로 계속 덮어써지는 문제가 생깁니다.
@@ -255,11 +268,17 @@ function generateSchedule(names, year, month, division, workerCount, shiftOrders
     if (shift === "휴") return { day, dow, shift, assignment: null, isRed, holiday };
 
     const manual = overrides[day];
-    let dayNamesOrder = [...rollingNamesOrder];
+    let dayNamesOrder = useShiftSpecificRotation
+      ? [...(shiftRollingOrders[shift] || rollingNamesOrder)]
+      : [...rollingNamesOrder];
+
     if (manual && Array.isArray(manual.names) && manual.names.length) {
-      const manualNames = normalizeManualOrderNames(manual.names, rollingNamesOrder, wc);
+      const manualNames = normalizeManualOrderNames(manual.names, dayNamesOrder, wc);
       dayNamesOrder = manualNames;
-      if (manual.mode === "basis") rollingNamesOrder = [...manualNames];
+      if (manual.mode === "basis") {
+        if (useShiftSpecificRotation) shiftRollingOrders[shift] = [...manualNames];
+        else rollingNamesOrder = [...manualNames];
+      }
     }
 
     const assignment = {};
@@ -269,7 +288,11 @@ function generateSchedule(names, year, month, division, workerCount, shiftOrders
       assignment[pos] = dayNamesOrder[canonicalIdx] || "";
     });
 
-    rollingNamesOrder = rotateNamesRight(rollingNamesOrder);
+    if (useShiftSpecificRotation) {
+      shiftRollingOrders[shift] = rotateNamesRight(shiftRollingOrders[shift] || dayNamesOrder);
+    } else {
+      rollingNamesOrder = rotateNamesRight(rollingNamesOrder);
+    }
     return { day, dow, shift, assignment, isRed, holiday, manualOverride: Boolean(manual) };
   });
 }
