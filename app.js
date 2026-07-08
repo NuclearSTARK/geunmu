@@ -1,5 +1,5 @@
 const { useState, useEffect, useRef, useCallback } = React;
-const APP_VERSION = "5.5.8-cband-shift-order-fix";
+const APP_VERSION = "8.1.0-engine-clean";
 // ver5.0: 파일 분리(index.html / app.js / firebase.js / styles.css), ver4.9 기능 포함
 
 
@@ -188,6 +188,38 @@ function rotateNamesRight(order) {
   return [arr[arr.length - 1], ...arr.slice(0, arr.length - 1)];
 }
 
+function rotateNamesRightBy(order, steps) {
+  const arr = Array.isArray(order) ? order.filter(Boolean) : [];
+  if (arr.length <= 1) return arr;
+  const len = arr.length;
+  const n = ((Number(steps || 0) % len) + len) % len;
+  if (n === 0) return [...arr];
+  return [...arr.slice(len - n), ...arr.slice(0, len - n)];
+}
+
+const ORDER_ENGINE_BASE_DATE = new Date(2026, 6, 1); // 2026-07-01: 검증 완료된 기준 월
+
+function countWorkDaysFromBase(targetDate, division, band, shiftFilter = null) {
+  const target = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate());
+  const base = new Date(ORDER_ENGINE_BASE_DATE.getFullYear(), ORDER_ENGINE_BASE_DATE.getMonth(), ORDER_ENGINE_BASE_DATE.getDate());
+  if (target.getTime() === base.getTime()) return 0;
+
+  let count = 0;
+  if (target > base) {
+    for (let d = new Date(base); d < target; d.setDate(d.getDate() + 1)) {
+      const sh = getShiftForDate(d.getFullYear(), d.getMonth() + 1, d.getDate(), division, band);
+      if (sh !== "휴" && (!shiftFilter || sh === shiftFilter)) count += 1;
+    }
+    return count;
+  }
+
+  for (let d = new Date(target); d < base; d.setDate(d.getDate() + 1)) {
+    const sh = getShiftForDate(d.getFullYear(), d.getMonth() + 1, d.getDate(), division, band);
+    if (sh !== "휴" && (!shiftFilter || sh === shiftFilter)) count += 1;
+  }
+  return -count;
+}
+
 const CANONICAL_POSITION_ORDER = {
   4: ["입초", "소내", "검색", "기록"],
   5: ["입초", "소내", "검색", "기록", "출검"],
@@ -220,43 +252,62 @@ function normalizeManualOrderNames(values, fallbackNames, count) {
   return result.slice(0, count);
 }
 
+
+// ── v6.0 근무순서 엔진 분리 ─────────────────────────────
+// UI/Firebase와 분리된 순수 계산 함수입니다. 앱 화면에는 노출하지 않습니다.
+function rotationEngineABD({ names, shiftOrders, workerCount, targetDate, division, band }) {
+  const normalizedOrders = normalizeShiftOrders(shiftOrders, division, workerCount);
+  const cycleIndexOrder = getCycleOrder(normalizedOrders, workerCount);
+  const baseOrder = getDisplayOrderNames(cycleIndexOrder, names, workerCount);
+  const rotationCount = countWorkDaysFromBase(targetDate, division, band, null);
+  return rotateNamesRightBy(baseOrder, rotationCount);
+}
+
+function rotationEngineC({ names, shiftOrders, workerCount, targetDate, division, band, shift }) {
+  const normalizedOrders = normalizeShiftOrders(shiftOrders, division, workerCount);
+  const baseShiftOrders = {
+    N: getDisplayOrderNames(normalizedOrders.N, names, workerCount),
+    A: getDisplayOrderNames(normalizedOrders.A, names, workerCount),
+    D: getDisplayOrderNames(normalizedOrders.D, names, workerCount),
+  };
+  const baseOrder = baseShiftOrders[shift] || getDisplayOrderNames(getCycleOrder(normalizedOrders, workerCount), names, workerCount);
+  const rotationCount = countWorkDaysFromBase(targetDate, division, band, shift);
+  return rotateNamesRightBy(baseOrder, rotationCount);
+}
+
+function getWorkerOrderForDate({ names, shiftOrders, workerCount, targetDate, division, band, shift }) {
+  // A/B/D반: 전체 근무일 엔진. C반: A/D/N 근무별 독립 엔진.
+  if (band === "C반") {
+    return rotationEngineC({ names, shiftOrders, workerCount, targetDate, division, band, shift });
+  }
+  return rotationEngineABD({ names, shiftOrders, workerCount, targetDate, division, band });
+}
+
+function getDisplayLabelsForSchedule(band, division, count, customPositionLabels) {
+  const labels = normalizePositionLabels(customPositionLabels, division, count);
+  if (count === 4 && division === '1발전' && ['A반','B반','D반'].includes(band)) return ['입초', '소내', '검색', '기록'];
+  if (count === 4 && division === '1발전' && band === 'C반') return ['입초', '기록', '검색', '소내'];
+  return labels;
+}
+
+function getPositionKeyFromDisplayLabel(label, positions, displayLabels) {
+  const cleaned = cleanPositionName(label);
+  const matched = positions.find(p => cleanPositionName(p) === cleaned);
+  if (matched) return matched;
+  const idx = displayLabels.findIndex(v => cleanPositionName(v) === cleaned);
+  return positions[idx >= 0 ? idx : 0] || positions[0];
+}
+
 function generateSchedule(names, year, month, division, workerCount, shiftOrders, band = "C반", manualOverrides = {}, customPositionLabels = null) {
   if (names.length !== workerCount) return [];
   const positions = POSITIONS_BY_DIV_COUNT[division][workerCount];
-  const displayLabels = normalizePositionLabels(customPositionLabels, division, workerCount);
+  const displayLabels = getDisplayLabelsForSchedule(band, division, workerCount, customPositionLabels);
   const days = getDaysInMonth(year, month);
   const wc = workerCount;
   const normalizedOrders = normalizeShiftOrders(shiftOrders, division, wc);
+  const cycleOrder = getCycleOrder(normalizedOrders, wc);
 
-  // v5.5.0 새 근무자 배치 엔진
-  // - 근무자 명단은 월/반/발전별 저장값을 기준으로 사용합니다.
-  // - 매월 첫 근무일은 저장된 순서 그대로 시작합니다.
-  // - 휴무일은 카운트하지 않습니다.
-  // - 근무일마다 마지막 근무자가 맨 앞으로 이동합니다.
-  // - 근무지 순서/명칭은 표시 위치만 바꾸며, 기준 근무지 순서는 [입초, 소내, 검색, 기록]입니다.
-  // 예) 표시순서 [입초,소내,검색,기록] → 1 2 3 4 / 4 1 2 3
-  // 예) 표시순서 [입초,기록,검색,소내] → 1 4 3 2 / 4 3 2 1
-  const cycleIndexOrder = getCycleOrder(normalizedOrders, wc);
-  let rollingNamesOrder = getDisplayOrderNames(cycleIndexOrder, names, wc);
-
-  // v5.5.8: C반 전용 근무별 순서 엔진
-  // C반은 N/A/D 근무가 각각 독립된 회전 패턴을 가집니다.
-  // 예) N근무는 N근무끼리 1 2 3 4 → 4 1 2 3 → 3 4 1 2
-  //     A근무는 A근무끼리 별도 회전, D근무도 D근무끼리 별도 회전
-  // A/B/D반은 기존 전체 근무일 기준 회전 로직을 유지합니다.
-  const useShiftSpecificRotation = band === "C반";
-  const shiftRollingOrders = {
-    N: getDisplayOrderNames(normalizedOrders.N, names, wc),
-    A: getDisplayOrderNames(normalizedOrders.A, names, wc),
-    D: getDisplayOrderNames(normalizedOrders.D, names, wc),
-  };
-
-  // v5.5.7 핵심 수정
-  // 예전 수동 날짜 수정값(manualOverrides)이 남아 있으면 특정 반/발전소, 특히 A반 1발전에서
-  // 관리자 화면에서 근무자를 바꿔도 표가 과거 고정값으로 계속 덮어써지는 문제가 생깁니다.
-  // 현재 수동 날짜 기능은 운영에서 제거하기로 했으므로, 표 생성 시 수동 override를 완전히 무시합니다.
-  // 앞으로 표는 오직 현재 월/반/발전의 저장된 근무자 명단(names)과 근무지 순서(positionLabels)만 기준으로 계산합니다.
-  const overrides = {};
+  const engine = window.SeulPoliceWorkEngine;
 
   return Array.from({ length: days }, (_, i) => {
     const day = i + 1;
@@ -267,35 +318,41 @@ function generateSchedule(names, year, month, division, workerCount, shiftOrders
 
     if (shift === "휴") return { day, dow, shift, assignment: null, isRed, holiday };
 
-    const manual = overrides[day];
-    let dayNamesOrder = useShiftSpecificRotation
-      ? [...(shiftRollingOrders[shift] || rollingNamesOrder)]
-      : [...rollingNamesOrder];
-
-    if (manual && Array.isArray(manual.names) && manual.names.length) {
-      const manualNames = normalizeManualOrderNames(manual.names, dayNamesOrder, wc);
-      dayNamesOrder = manualNames;
-      if (manual.mode === "basis") {
-        if (useShiftSpecificRotation) shiftRollingOrders[shift] = [...manualNames];
-        else rollingNamesOrder = [...manualNames];
-      }
+    let displayOrderNames;
+    if (engine && typeof engine.generateDisplayOrder === 'function') {
+      displayOrderNames = engine.generateDisplayOrder({
+        year,
+        month,
+        day,
+        band,
+        division,
+        shift,
+        workerCount: wc,
+        names,
+        workerOrder: cycleOrder,
+        getShiftForDate,
+      });
+    } else {
+      // 안전 fallback: 검증된 오른쪽 회전만 사용
+      const targetDate = new Date(year, month - 1, day);
+      const count = countWorkDaysFromBase(targetDate, division, band, band === 'C반' ? shift : null);
+      const baseOrder = getDisplayOrderNames(cycleOrder, names, wc);
+      displayOrderNames = rotateNamesRightBy(baseOrder, count);
     }
 
     const assignment = {};
-    positions.forEach((pos, posIdx) => {
-      const label = displayLabels[posIdx] || pos;
-      const canonicalIdx = getCanonicalPositionIndex(label, posIdx, wc);
-      assignment[pos] = dayNamesOrder[canonicalIdx] || "";
+    displayLabels.forEach((label, idx) => {
+      const key = getPositionKeyFromDisplayLabel(label, positions, displayLabels);
+      assignment[key] = displayOrderNames[idx] || "";
     });
 
-    if (useShiftSpecificRotation) {
-      shiftRollingOrders[shift] = rotateNamesRight(shiftRollingOrders[shift] || dayNamesOrder);
-    } else {
-      rollingNamesOrder = rotateNamesRight(rollingNamesOrder);
-    }
-    return { day, dow, shift, assignment, isRed, holiday, manualOverride: Boolean(manual) };
+    // 혹시 표시되지 않는 포지션 키가 있으면 빈 값으로 채워 렌더링 방어
+    positions.forEach((pos) => { if (!(pos in assignment)) assignment[pos] = ""; });
+
+    return { day, dow, shift, assignment, isRed, holiday, manualOverride: false };
   });
 }
+
 // ── 색상 ─────────────────────────────────────────────────
 const SHIFT_COLORS = {
   N: { bg: "#1a56db", text: "#fff" },
@@ -1576,7 +1633,7 @@ function App() {
             return <div key={day.day} style={{ display:'grid', gridTemplateColumns:gridCols, borderBottom:idx<schedule.length-1?'1px solid #1e293b':'none', background:isToday?'rgba(37,99,235,.16)':idx%2?'#172032':'transparent', padding:'0 10px', outline:isToday?'2px solid #3b82f6':'none', outlineOffset:-1 }}>
               <div style={{ padding:'9px 4px', display:'flex', alignItems:'center', gap:4 }}><span style={{ fontWeight:900, color:textColor }}>{day.day}</span><span style={{ color:textColor }}>({day.dow})</span>{day.holiday && <span style={{ color:'#ef4444', fontSize:10 }}>★</span>}</div>
               <div style={{ padding:'9px 2px', textAlign:'center' }}>{day.shift !== '휴' ? <span style={{ background:SHIFT_COLORS[day.shift].bg, color:'#fff', borderRadius:5, padding:'2px 7px', fontSize:11, fontWeight:900 }}>{day.shift}</span> : <span style={{ fontSize:11, color:'#475569' }}>휴</span>}</div>
-              {displayPositionLabels.map(label => {
+              {visiblePositionLabels.map(label => {
                 const key = getPositionKeyByLabel(label);
                 const patrol = getPatrolInfo(day, label);
                 return <div key={label} style={{ padding:'9px 4px', fontSize:12, fontWeight:patrol?950:700, color:day.assignment?(patrol?'#fde047':'#f1f5f9'):'#334155', textAlign:'center', background:patrol?'rgba(250,204,21,.16)':'transparent', borderRadius:6, boxShadow:patrol?'inset 0 0 0 1px rgba(250,204,21,.45)':'none' }}>{day.assignment ? <>{day.assignment[key]}{patrol && <span style={{ marginLeft:3 }}>{patrol.mark}</span>}</> : ''}</div>;
